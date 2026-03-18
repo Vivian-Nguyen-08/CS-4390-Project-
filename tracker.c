@@ -1,4 +1,3 @@
-
 #include <stdio.h>
 #include <sys/types.h> //provides pid_t 
 #include <sys/socket.h> //provides socket functions 
@@ -9,14 +8,20 @@
 #include <stdlib.h> 
 #include <string.h> 
 #include <unistd.h>
+#include <dirent.h> 
+#include <sys/stat.h>
+#include <unistd.h>
+
 
 
 
 
 #define MAXLINE 512
 #define MAXREQUESTS 20
+char shared_directory[256];  
+char temp[512]; 
 void *peer_handler(void *arg);
-void handle_list_req(int sock_child){}
+void handle_list_req(int sock_child); 
 void handle_get_req(int sock_child, char *fname){}
 void xtrct_fname(char *msg, char *delim){}
 void tokenize_createmsg(char *msg){}
@@ -36,15 +41,27 @@ int main(){
 	FILE *fptr; 
 	fptr = fopen("sconfig","r");
 	if(fptr == NULL){
-    printf("Cannot open sconfig\n");
-    exit(0);
-}
+    	printf("Cannot open sconfig\n");
+    	exit(0);
+	}
+
 	char port_number[256]; 
-	char shared_directory[256];  
 	fgets(port_number,sizeof(port_number),fptr); 
 	fgets(shared_directory,sizeof(shared_directory),fptr); 
-	server_port = atoi(port_number); 
 	fclose(fptr); 
+
+	port_number[strcspn(port_number, "\n")] = '\0';
+	shared_directory[strcspn(shared_directory, "\n")] = '\0';
+
+	server_port = atoi(port_number); 
+
+	
+	struct stat st = {0};
+	if (stat(shared_directory, &st) == -1) {
+		mkdir(shared_directory, 0700);
+	}
+   
+
 
 	clilen = sizeof(struct sockaddr_in);
 
@@ -93,7 +110,7 @@ int main(){
 	   pthread_t thread; 
 	   pthread_create(&thread,NULL,peer_handler,sock_ptr); 
 	   pthread_detach(thread);
-	   close(sock_child);
+	   
 	        
 	} //end of while loop 
 
@@ -115,8 +132,16 @@ void *peer_handler (void *arg) { //function for file transfer. child process wil
 	char fname[MAXLINE];
 
 	//it reads the message sent by the peer and stores it inside of length 
-	length=read(sock_child,read_msg,MAXLINE);			
-	read_msg[length]='\0';
+	length=read(sock_child,read_msg,MAXLINE);
+	read_msg[strcspn(read_msg, "\r\n")] = '\0';
+
+	if(length <= 0){
+    printf("read failed or client disconnected\n");
+    close(sock_child);
+    free(arg);
+    return NULL;
+}
+
 	if((!strcmp(read_msg, "REQ LIST"))||(!strcmp(read_msg, "req list"))||(!strcmp(read_msg, "<REQ LIST>"))||(!strcmp(read_msg, "<REQ LIST>\n"))){//list command received
 		handle_list_req(sock_child);// handle list request
 		printf("list request handled.\n");
@@ -136,7 +161,84 @@ void *peer_handler (void *arg) { //function for file transfer. child process wil
 	}
 
 	free(arg); 
+	close(sock_child);
 	return NULL; 
 }//end client handler function
 
 
+
+//LIST – This command is sent by a connected peer to the tracker server to send over to the requesting peer the list of  (tracker) files in the shared directory at the server. 
+void handle_list_req(int sock_child)
+{
+	struct dirent *de;
+	//use opendir/readdir() 
+	//for each track file read Filename, fileszie, md5 fields 
+	//build and send the rep list response 
+	
+	int fileCounter = 1; 
+
+	DIR *dr = opendir(shared_directory); 
+
+	char *msg = malloc(1000000);
+	msg[0] = '\0';
+
+	if(dr == NULL)  {
+		printf("Could not open current directory"); 
+	} 
+
+	//go through the directory and get every file and print out each file information 
+
+	while((de = readdir(dr)) != NULL)
+	{
+		if(strstr(de->d_name, ".track") == NULL){
+    		continue;
+		}
+		char filepath[512]; 
+		sprintf(filepath, "%s/%s",shared_directory, de->d_name); 
+
+		char filename[256],filesize[256],md5[256]; 
+		char line[512]; 
+
+		FILE *fptr; 
+		fptr = fopen(filepath,"r");
+		if(fptr == NULL){
+			printf("Cannot open sconfig\n");
+			exit(0);
+		}
+
+	
+	//get filename 
+	fgets(line,sizeof(line),fptr); 
+	sscanf(line, "%*[^:]: %s", filename); 
+
+	//get filesize 
+	fgets(line,sizeof(line),fptr); 
+	sscanf(line, "%*[^:]: %s", filesize);
+
+	//skip description 
+	fgets(line,sizeof(line),fptr); 
+
+	//get md5 
+	fgets(line,sizeof(line),fptr); 
+	sscanf(line, "%*[^:]: %s", md5);
+
+	fclose(fptr); 
+	
+	
+	sprintf(temp, "<%d %s %s %s>\n", fileCounter, filename, filesize, md5);
+	strcat(msg,temp); 
+	fileCounter++; 
+
+	}
+
+	sprintf(temp,"<REP LIST %d>\n",fileCounter -1);
+	send(sock_child, temp, strlen(temp), 0);
+	send(sock_child, msg, strlen(msg), 0);
+	send(sock_child, "<REP LIST END>\n", 15, 0);
+
+
+	closedir(dr); 
+	free(msg);
+	return; 
+
+}
