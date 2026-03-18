@@ -22,8 +22,8 @@ char shared_directory[256];
 char temp[512]; 
 void *peer_handler(void *arg);
 void handle_list_req(int sock_child); 
-void handle_get_req(int sock_child, char *fname){}
-void xtrct_fname(char *msg, char *delim){}
+void handle_get_req(int sock_child, char *fname);
+void xtrct_fname(char *msg, char *delim,char *fname); 
 void tokenize_createmsg(char *msg){}
 void handle_createtracker_req(int sock_child){}
 void tokenize_updatemsg(char *msg){}
@@ -147,7 +147,7 @@ void *peer_handler (void *arg) { //function for file transfer. child process wil
 		printf("list request handled.\n");
 	}
 	else if((strstr(read_msg,"get")!=NULL)||(strstr(read_msg,"GET")!=NULL)){// get command received
-		xtrct_fname(read_msg, " ");// extract filename from the command		
+		xtrct_fname(read_msg, " ",fname);// extract filename from the command		
 		handle_get_req(sock_child, fname);		
 	}
 	else if((strstr(read_msg,"createtracker")!=NULL)||(strstr(read_msg,"Createtracker")!=NULL)||(strstr(read_msg,"CREATETRACKER")!=NULL)){// get command received
@@ -240,5 +240,55 @@ void handle_list_req(int sock_child)
 	closedir(dr); 
 	free(msg);
 	return; 
+
+}
+
+void handle_get_req(int sock_child, char *fname){
+
+	//open the file and extract all of the data we need 
+	char filepath[512]; 
+	sprintf(filepath, "%s/%s",shared_directory, fname); 
+
+	char filename[256],filesize[256],md5[256]; 
+	char line[512]; 
+
+	FILE *fptr; 
+	fptr = fopen(filepath,"r");
+	if(fptr == NULL){
+		//printf("GET: file not found: %s\n", filepath);
+    	send(sock_child, "<GET invalid>\n", 14, 0);
+    	return;
+	}
+
+	//send the get begin 
+	send(sock_child, "<REP GET BEGIN>\n", 16, 0);
+	
+	//send the rest of the file content 
+	//send entire file content line by line
+	while(fgets(line, sizeof(line), fptr) != NULL){
+    send(sock_child, line, strlen(line), 0);
+    //grab md5 from line 4
+    if(strncmp(line, "MD5:", 4) == 0){
+        sscanf(line, "%*[^:]: %s", md5);
+    }
+}
+	//send the ending 
+	sprintf(temp,"\n<REP GET END %s>\n",md5);
+	send(sock_child, temp, strlen(temp), 0);
+
+	fclose(fptr); 
+
+
+	return; 
+}
+
+void xtrct_fname(char *msg, char *delim,char *fname){
+	char *myPtr = strstr(msg,delim); 
+
+	if(myPtr != NULL) {
+	strcpy(fname, myPtr+1);		
+	fname[strcspn(fname, ">\n\r")] = '\0';
+	}
+
 
 }
