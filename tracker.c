@@ -18,6 +18,7 @@
 
 #define MAXLINE 512
 #define MAXREQUESTS 20
+
 char shared_directory[256];  
 char temp[512]; 
 void *peer_handler(void *arg);
@@ -243,13 +244,14 @@ void handle_list_req(int sock_child)
 
 }
 
+ //GET: sends the tracker file being requested.
 void handle_get_req(int sock_child, char *fname){
 
 	//open the file and extract all of the data we need 
 	char filepath[512]; 
 	sprintf(filepath, "%s/%s",shared_directory, fname); 
 
-	char filename[256],filesize[256],md5[256]; 
+	char md5[256]; 
 	char line[512]; 
 
 	FILE *fptr; 
