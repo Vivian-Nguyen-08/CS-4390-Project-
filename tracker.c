@@ -11,34 +11,48 @@
 #include <dirent.h> 
 #include <sys/stat.h>
 #include <unistd.h>
+#include <stdbool.h>
+#include <time.h> 
+
+//create a struct to make it easier to pass values when doing createtracker 
+typedef struct {
+    char file_name[256];
+    char file_size[256];
+    char description[256];
+    char md5[64];
+	char ip_address[256];
+	char port_number[256];
+	bool success; 
+} fileEntry; 
 
 
 
-
-
+//global variables 
 #define MAXLINE 512
 #define MAXREQUESTS 20
 
+//function declarations 
 char shared_directory[256];  
 char temp[512]; 
 void *peer_handler(void *arg);
 void handle_list_req(int sock_child); 
 void handle_get_req(int sock_child, char *fname);
 void xtrct_fname(char *msg, char *delim,char *fname); 
-void tokenize_createmsg(char *msg){}
-void handle_createtracker_req(int sock_child){}
+fileEntry tokenize_createmsg(char *msg); 
+void handle_createtracker_req(int sock_child,fileEntry new_entry); 
 void tokenize_updatemsg(char *msg){}
 void handle_updatetracker_req(int sock_child){}
 
 
 int main(){
+	//declaring local variables 
 	int sockid; 
     int sock_child;
     int server_port;
     socklen_t clilen;
 
 
-	//will read the sconfig file to determine where to put files 
+	//will read the sconfig file and get the port number and shared directory 
 	FILE *fptr; 
 	fptr = fopen("sconfig","r");
 	if(fptr == NULL){
@@ -56,7 +70,7 @@ int main(){
 
 	server_port = atoi(port_number); 
 
-	
+	//creates the shared directory if it isn't already made 
 	struct stat st = {0};
 	if (stat(shared_directory, &st) == -1) {
 		mkdir(shared_directory, 0700);
@@ -75,7 +89,7 @@ int main(){
 
   
 	int yes=1;
-	//Lose the pesky "Address already in use" error message
+	//lose the pesky "Address already in use" error message
 	if (setsockopt(sockid,SOL_SOCKET,SO_REUSEADDR,&yes,sizeof(int)) == -1) {
 	perror("setsockopt");
 	exit(1);
@@ -152,8 +166,8 @@ void *peer_handler (void *arg) { //function for file transfer. child process wil
 		handle_get_req(sock_child, fname);		
 	}
 	else if((strstr(read_msg,"createtracker")!=NULL)||(strstr(read_msg,"Createtracker")!=NULL)||(strstr(read_msg,"CREATETRACKER")!=NULL)){// get command received
-		tokenize_createmsg(read_msg);
-		handle_createtracker_req(sock_child);
+		fileEntry new_entry = tokenize_createmsg(read_msg);
+		handle_createtracker_req(sock_child,new_entry);
 		
 	}
 	else if((strstr(read_msg,"updatetracker")!=NULL)||(strstr(read_msg,"Updatetracker")!=NULL)||(strstr(read_msg,"UPDATETRACKER")!=NULL)){// get command received
@@ -172,34 +186,31 @@ void *peer_handler (void *arg) { //function for file transfer. child process wil
 void handle_list_req(int sock_child)
 {
 	struct dirent *de;
-	//use opendir/readdir() 
-	//for each track file read Filename, fileszie, md5 fields 
-	//build and send the rep list response 
-	
 	int fileCounter = 1; 
-
-	DIR *dr = opendir(shared_directory); 
-
 	char *msg = malloc(1000000);
 	msg[0] = '\0';
+
+	//open the shared directory 
+	DIR *dr = opendir(shared_directory); 
 
 	if(dr == NULL)  {
 		printf("Could not open current directory"); 
 	} 
 
 	//go through the directory and get every file and print out each file information 
-
 	while((de = readdir(dr)) != NULL)
 	{
 		if(strstr(de->d_name, ".track") == NULL){
     		continue;
 		}
+		//formats the filepath to check it out 
 		char filepath[512]; 
 		sprintf(filepath, "%s/%s",shared_directory, de->d_name); 
 
 		char filename[256],filesize[256],md5[256]; 
 		char line[512]; 
 
+		//opens up the file 
 		FILE *fptr; 
 		fptr = fopen(filepath,"r");
 		if(fptr == NULL){
@@ -225,13 +236,14 @@ void handle_list_req(int sock_child)
 
 	fclose(fptr); 
 	
-	
+	//formats what will be showing the peer for each file 
 	sprintf(temp, "<%d %s %s %s>\n", fileCounter, filename, filesize, md5);
 	strcat(msg,temp); 
 	fileCounter++; 
 
 	}
 
+	//send the message to the peer
 	sprintf(temp,"<REP LIST %d>\n",fileCounter -1);
 	send(sock_child, temp, strlen(temp), 0);
 	send(sock_child, msg, strlen(msg), 0);
@@ -254,6 +266,7 @@ void handle_get_req(int sock_child, char *fname){
 	char md5[256]; 
 	char line[512]; 
 
+	//open the file the peer is requesting for 
 	FILE *fptr; 
 	fptr = fopen(filepath,"r");
 	if(fptr == NULL){
@@ -268,6 +281,9 @@ void handle_get_req(int sock_child, char *fname){
 	//send the rest of the file content 
 	//send entire file content line by line
 	while(fgets(line, sizeof(line), fptr) != NULL){
+		if(line[0] == '#'){
+        continue;
+    }
     send(sock_child, line, strlen(line), 0);
     //grab md5 from line 4
     if(strncmp(line, "MD5:", 4) == 0){
@@ -284,6 +300,54 @@ void handle_get_req(int sock_child, char *fname){
 	return; 
 }
 
+void handle_createtracker_req(int sock_child,fileEntry new_entry)
+{
+	//checking to see all of the values needed to make a file are there and if they aren't send fail 
+	if(new_entry.success == false) {
+		send(sock_child, "<createtracker fail>\n", 21, 0);
+		return;
+	}
+	
+	//format the filepath 
+	char filepath[512]; 
+	sprintf(filepath, "%s/%s.track",shared_directory, new_entry.file_name); 
+
+
+	//open the file to see if the file already exists and if it does then tell peer the file already exists 
+	FILE *fptr; 
+	fptr = fopen(filepath,"r");
+	if(fptr != NULL){
+		fclose(fptr);
+    	send(sock_child, "<createtracker ferr>\n", 21, 0);
+    	return;
+	}
+
+	//create the file then write into it 
+	fptr = fopen(filepath, "w");
+	if(fptr == NULL){
+		// couldn't create the file for some reason
+		send(sock_child, "<createtracker fail>\n", 21, 0);
+		return;
+	}
+
+	//write contents into the file 
+	fprintf(fptr, "Filename: %s\n", new_entry.file_name);
+	fprintf(fptr, "Filesize: %s\n", new_entry.file_size);
+	fprintf(fptr, "Description: %s\n", new_entry.description);
+	fprintf(fptr, "MD5: %s\n", new_entry.md5);
+	fprintf(fptr, "#list of peers follows next\n");
+	fprintf(fptr, "%s:%s:0:%s:%ld\n", new_entry.ip_address, new_entry.port_number, new_entry.file_size, time(NULL));
+
+	fclose(fptr);
+
+	//send success
+	send(sock_child, "<createtracker succ>\n", 21, 0);
+
+	return; 
+}
+
+
+
 void xtrct_fname(char *msg, char *delim,char *fname){
 	char *myPtr = strstr(msg,delim); 
 
@@ -294,3 +358,63 @@ void xtrct_fname(char *msg, char *delim,char *fname){
 
 
 }
+
+
+fileEntry tokenize_createmsg(char *msg){
+	fileEntry new_entry; 
+	new_entry.success = true; 
+
+	//remove trailing >
+	msg[strcspn(msg, ">")] = '\0';
+	
+	//start the token 
+	char *token = strtok(msg, " "); 
+
+	//get filename 
+	token = strtok(NULL, " "); 
+	if (token != NULL) 
+    	strcpy(new_entry.file_name, token);
+	else 
+		new_entry.success = false; 
+
+	//get filesize 
+	token = strtok(NULL, " "); 
+	if (token != NULL) 
+    	strcpy(new_entry.file_size, token);
+	else 
+		new_entry.success = false; 
+
+	//get description 
+	token = strtok(NULL, " "); 
+	if (token != NULL) 
+    	strcpy(new_entry.description, token);
+	else 
+		new_entry.success = false; 
+	
+	//get md5 
+	token = strtok(NULL, " "); 
+	if (token != NULL) 
+    	strcpy(new_entry.md5, token); 
+	else 
+		new_entry.success = false; 
+	
+	//get ip_address 
+	token = strtok(NULL, " "); 
+	if (token != NULL) 
+    	strcpy(new_entry.ip_address, token);
+	else 
+		new_entry.success = false; 
+	
+	//get port_number 
+	token = strtok(NULL, " "); 
+	if (token != NULL) 
+    	strcpy(new_entry.port_number, token);
+	else 
+		new_entry.success = false; 
+
+	
+	return new_entry; 
+
+
+}
+
