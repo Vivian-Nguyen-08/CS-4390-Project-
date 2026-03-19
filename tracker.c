@@ -13,6 +13,8 @@
 #include <unistd.h>
 #include <stdbool.h>
 #include <time.h> 
+#include <arpa/inet.h>
+
 
 //create a struct to make it easier to pass values when doing createtracker 
 typedef struct {
@@ -24,6 +26,16 @@ typedef struct {
 	char port_number[256];
 	bool success; 
 } fileEntry; 
+
+typedef struct {
+    char file_name[256];
+    char start_byte[256];
+    char end_byte[256];
+	char ip_address[256];
+	char port_number[256];
+	bool success; 
+
+} fileUpdate; 
 
 
 
@@ -40,8 +52,8 @@ void handle_get_req(int sock_child, char *fname);
 void xtrct_fname(char *msg, char *delim,char *fname); 
 fileEntry tokenize_createmsg(char *msg); 
 void handle_createtracker_req(int sock_child,fileEntry new_entry); 
-void tokenize_updatemsg(char *msg){}
-void handle_updatetracker_req(int sock_child){}
+fileUpdate tokenize_updatemsg(char *msg); 
+void handle_updatetracker_req(int sock_child,fileUpdate update_entry); 
 
 
 int main(){
@@ -117,7 +129,7 @@ int main(){
 	if ((sock_child = accept(sockid ,(struct sockaddr *) &client_addr,&clilen))==-1){ /* Accept connection and create a socket descriptor for actual work */
 		   printf("Tracker Cannot accept...\n"); exit(0); 
 	   }
-	   printf("Client connected\n"); 
+	   printf("Client connected from %s\n", inet_ntoa(client_addr.sin_addr));
 
 	   //create a thread and have the peer_handler handle the thread! 
 	   int *sock_ptr = malloc(sizeof(int)); 
@@ -138,7 +150,6 @@ int main(){
 void *peer_handler (void *arg) { //function for file transfer. child process will call this function     
     //start handiling client request	
 
-	
 
 	//the(int *) arg casts void* to int* and the second * dereferences the value 
 	int sock_child = *(int *)arg; 
@@ -158,21 +169,24 @@ void *peer_handler (void *arg) { //function for file transfer. child process wil
 }
 
 	if((!strcmp(read_msg, "REQ LIST"))||(!strcmp(read_msg, "req list"))||(!strcmp(read_msg, "<REQ LIST>"))||(!strcmp(read_msg, "<REQ LIST>\n"))){//list command received
+		printf("LIST request recevied\n"); 
 		handle_list_req(sock_child);// handle list request
-		printf("list request handled.\n");
 	}
 	else if((strstr(read_msg,"get")!=NULL)||(strstr(read_msg,"GET")!=NULL)){// get command received
+		printf("GET request recevied\n"); 
 		xtrct_fname(read_msg, " ",fname);// extract filename from the command		
-		handle_get_req(sock_child, fname);		
+		handle_get_req(sock_child, fname);	
+	
 	}
 	else if((strstr(read_msg,"createtracker")!=NULL)||(strstr(read_msg,"Createtracker")!=NULL)||(strstr(read_msg,"CREATETRACKER")!=NULL)){// get command received
+		printf("createtracker request received\n"); 
 		fileEntry new_entry = tokenize_createmsg(read_msg);
 		handle_createtracker_req(sock_child,new_entry);
-		
-	}
+		}
 	else if((strstr(read_msg,"updatetracker")!=NULL)||(strstr(read_msg,"Updatetracker")!=NULL)||(strstr(read_msg,"UPDATETRACKER")!=NULL)){// get command received
-		tokenize_updatemsg(read_msg);
-		handle_updatetracker_req(sock_child);		
+		printf("updatetracker request received\n"); 
+		fileUpdate update_entry = tokenize_updatemsg(read_msg);
+		handle_updatetracker_req(sock_child,update_entry);		
 	}
 
 	free(arg); 
@@ -270,7 +284,7 @@ void handle_get_req(int sock_child, char *fname){
 	FILE *fptr; 
 	fptr = fopen(filepath,"r");
 	if(fptr == NULL){
-		//printf("GET: file not found: %s\n", filepath);
+		printf("GET: file not found: %s\n", filepath);
     	send(sock_child, "<GET invalid>\n", 14, 0);
     	return;
 	}
@@ -300,10 +314,12 @@ void handle_get_req(int sock_child, char *fname){
 	return; 
 }
 
+//createtracker: creates a tracker file with received information and time stamp, if the same tracker file is not already created, and sends error message, otherwise.
 void handle_createtracker_req(int sock_child,fileEntry new_entry)
 {
 	//checking to see all of the values needed to make a file are there and if they aren't send fail 
 	if(new_entry.success == false) {
+		printf("createtracker has missing arguments"); 
 		send(sock_child, "<createtracker fail>\n", 21, 0);
 		return;
 	}
@@ -318,6 +334,7 @@ void handle_createtracker_req(int sock_child,fileEntry new_entry)
 	fptr = fopen(filepath,"r");
 	if(fptr != NULL){
 		fclose(fptr);
+		printf("createtracker: file already exists: %s\n", filepath);
     	send(sock_child, "<createtracker ferr>\n", 21, 0);
     	return;
 	}
@@ -345,6 +362,120 @@ void handle_createtracker_req(int sock_child,fileEntry new_entry)
 
 	return; 
 }
+
+//updatetracker: if no such file exists it responds back by an error message to the peer, closes the TCP connection and terminates the handler thread. If such tracker file exists, then it creates a new entry if the peer is new (the time stamp for this new entry will the system's current time stamp) and updates the information if the peer is already added (its time stamp must be updated to the current system time stamp.). It also removes the entry of the dead peers. A peer is considered dead if its update time interval elapses. 
+
+void handle_updatetracker_req(int sock_child,fileUpdate update_entry)
+{
+	//checking to see all of the values needed to update a file are there and if they aren't send fail 
+	if(update_entry.success == false) {
+		sprintf(temp,"<updatetracker %s fail>\n",update_entry.file_name);
+		send(sock_child, temp,strlen(temp), 0);
+		return;
+	}
+	
+	//format the filepath 
+	char filepath[512]; 
+	sprintf(filepath, "%s/%s.track",shared_directory, update_entry.file_name); 
+
+
+	//open the file and if the file doesn't exist then error out 
+	FILE *fptr; 
+	fptr = fopen(filepath,"r");
+	if(fptr == NULL){
+		printf("updatetracker: file doesn't exists: %s\n", filepath);
+		sprintf(temp,"<updatetracker %s ferr>\n",update_entry.file_name);
+    	send(sock_child, temp, strlen(temp), 0);
+    	return;
+	}
+
+	//read the file until we reach the comment with the list of all the peers 
+	char *header = malloc(10000);
+    header[0] = '\0';
+	char line[512];
+	
+	while(fgets(line,sizeof(line),fptr) != NULL) 
+	{
+			//add information we found in the file into the header 
+			strcat(header,line); 
+			if(line[0] == '#')
+				break; 
+	}
+
+	time_t curr_time = time(NULL); 
+	long update_interval = 900; 
+
+	 // read peer lines one by one and process them
+    char *peers= malloc(100000);
+    peers[0] = '\0';
+    bool found_peer = false; 
+
+	
+    while(fgets(line, sizeof(line), fptr) != NULL){
+
+        //go through each peer 
+        char p_ip_address[256], p_port[256], p_start_byte[256], p_end_byte[256];
+		long p_time; 
+        sscanf(line, "%[^:]:%[^:]:%[^:]:%[^:]:%ld",p_ip_address, p_port, p_start_byte, p_end_byte, &p_time);
+
+		time_t p_timestamp = (time_t)p_time; 
+
+        //if the peer is dead then we won't save it 
+        if(curr_time - p_timestamp > update_interval)
+		{
+			printf("A dead peer has been removed %s:%s\n",p_ip_address, p_port); 
+            continue;
+        }
+
+        //check if the ip address for this peer and port number are the ones we need to update 
+        if(strcmp( p_ip_address, update_entry.ip_address) == 0 && strcmp(p_port, update_entry.port_number) == 0){
+            char updated_line[512];
+            printf("A peer has been updated: %s:%s\n", update_entry.ip_address, update_entry.port_number);
+			sprintf(updated_line, "%s:%s:%s:%s:%ld\n",update_entry.ip_address,update_entry.port_number,update_entry.start_byte,update_entry.end_byte, (long)curr_time);
+            strcat(peers, updated_line);
+            found_peer= true;
+        } else {
+            //since not the peer we want to update just add it to temp 
+            strcat(peers, line);
+        }
+    }
+	fclose(fptr);
+
+	//if we couldn't find the peer then it means its a new peer so just add another line with the new peer 
+	if(found_peer == false) 
+	{
+		printf("A new peer added: %s:%s\n", update_entry.ip_address, update_entry.port_number);
+		sprintf(temp,"%s:%s:%s:%s:%ld\n",update_entry.ip_address,update_entry.port_number,update_entry.start_byte,update_entry.end_byte,curr_time); 
+		strcat(peers,temp); 
+	}
+
+	//open up the file so we can override the content 
+	 fptr = fopen(filepath, "w");
+    if(fptr == NULL){
+        sprintf(temp, "<updatetracker %s fail>\n", update_entry.file_name);
+        send(sock_child, temp, strlen(temp), 0);
+        free(header);
+        free(peers);
+        return;
+    }
+
+    //write all of the content back to the file 
+    fprintf(fptr, "%s", header);
+    fprintf(fptr, "%s", peers);
+    
+	//close and free everything 
+	fclose(fptr);
+    free(header);
+    free(peers);
+
+    // send success
+    sprintf(temp, "<updatetracker %s succ>\n", update_entry.file_name);
+    send(sock_child, temp, strlen(temp), 0);
+
+    return;
+
+}
+
 
 
 
@@ -416,5 +547,56 @@ fileEntry tokenize_createmsg(char *msg){
 	return new_entry; 
 
 
+}
+
+fileUpdate tokenize_updatemsg(char *msg) 
+{
+	fileUpdate update_entry; 
+	update_entry.success = true; 
+
+	//remove trailing >
+	msg[strcspn(msg, ">")] = '\0';
+	
+	//start the token 
+	char *token = strtok(msg, " "); 
+
+	//get filename 
+	token = strtok(NULL, " "); 
+	if (token != NULL) 
+    	strcpy(update_entry.file_name, token);
+	else 
+		update_entry.success = false; 
+
+	//get filesize 
+	token = strtok(NULL, " "); 
+	if (token != NULL) 
+    	strcpy(update_entry.start_byte, token);
+	else 
+		update_entry.success = false; 
+
+	//get description 
+	token = strtok(NULL, " "); 
+	if (token != NULL) 
+    	strcpy(update_entry.end_byte, token);
+	else 
+		update_entry.success = false; 
+
+	
+	//get ip_address 
+	token = strtok(NULL, " "); 
+	if (token != NULL) 
+    	strcpy(update_entry.ip_address, token);
+	else 
+		update_entry.success = false; 
+	
+	//get port_number 
+	token = strtok(NULL, " "); 
+	if (token != NULL) 
+    	strcpy(update_entry.port_number, token);
+	else 
+		update_entry.success = false; 
+
+	
+	return update_entry; 
 }
 
