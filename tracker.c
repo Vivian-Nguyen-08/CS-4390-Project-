@@ -45,7 +45,7 @@ typedef struct {
 
 //function declarations 
 char shared_directory[256];  
-char temp[512]; 
+char temp[2048]; 
 void *peer_handler(void *arg);
 void handle_list_req(int sock_child); 
 void handle_get_req(int sock_child, char *fname);
@@ -218,7 +218,7 @@ void handle_list_req(int sock_child)
     		continue;
 		}
 		//formats the filepath to check it out 
-		char filepath[512]; 
+		char filepath[1024]; 
 		sprintf(filepath, "%s/%s",shared_directory, de->d_name); 
 
 		char filename[256],filesize[256],md5[256]; 
@@ -305,7 +305,7 @@ void handle_get_req(int sock_child, char *fname){
     }
 }
 	//send the ending 
-	sprintf(temp,"\n<REP GET END %s>\n",md5);
+	sprintf(temp,"<REP GET END %s>\n",md5);
 	send(sock_child, temp, strlen(temp), 0);
 
 	fclose(fptr); 
@@ -429,7 +429,7 @@ void handle_updatetracker_req(int sock_child,fileUpdate update_entry)
 
         //check if the ip address for this peer and port number are the ones we need to update 
         if(strcmp( p_ip_address, update_entry.ip_address) == 0 && strcmp(p_port, update_entry.port_number) == 0){
-            char updated_line[512];
+            char updated_line[1024];
             printf("A peer has been updated: %s:%s\n", update_entry.ip_address, update_entry.port_number);
 			sprintf(updated_line, "%s:%s:%s:%s:%ld\n",update_entry.ip_address,update_entry.port_number,update_entry.start_byte,update_entry.end_byte, (long)curr_time);
             strcat(peers, updated_line);
