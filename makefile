@@ -7,7 +7,7 @@ tracker: tracker.c
 clean:
 	rm -f tracker
 
-	peer1/peer: peer.c
+peer1/peer: peer.c
 	mkdir -p peer1
 	$(CC) $(CFLAGS) -o peer1/peer peer.c
 

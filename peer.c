@@ -12,6 +12,8 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <pthread.h>
+//#include <sys/stat.h> //added to have mkdir work for mac and linux 
+//#include <sys/types.h> //added to have mkdir work for mac and linux 
 
 #define MAXLINE 512
 #define CHUNK_SIZE 1024
