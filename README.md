@@ -34,7 +34,7 @@ and sends information to tell the tracker server that it has this part of the fi
 * Structs
 * Constants
 * Data Structures (PeerSegment, Segment, ChunkResult, ThreadArgs, TrackInfo)
-* Helpers (return newest, comparator, Chunk Comparator, Connection Check, SendAll, recieveExact)
+* Helpers (return newest, Connection Check, SendAll, recieveExact)
 * track.c file parser
 * TCP Chunk Download
 * Thread Section
