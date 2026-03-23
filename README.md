@@ -30,11 +30,13 @@ and sends information to tell the tracker server that it has this part of the fi
   Compile:
     gcc -std=c11 -pthread -Wall -Wextra -o peer_downloader peer_downloader.c -lpthread
     Makfile made
-  
- */
 
-// Structs
-// Constants
-// Data Structures (PeerSegment, Segment, ChunkResult, ThreadArgs, TrackInfo)
-// Helpers (return newest, comparator, Chunk Comparator, Connection Check, SendAll, recieveExact)
-//
+* Structs
+* Constants
+* Data Structures (PeerSegment, Segment, ChunkResult, ThreadArgs, TrackInfo)
+* Helpers (return newest, comparator, Chunk Comparator, Connection Check, SendAll, recieveExact)
+* track.c file parser
+* TCP Chunk Download
+* Thread Section
+* Tracker Update
+* Download Orchestrator
