@@ -40,3 +40,5 @@ and sends information to tell the tracker server that it has this part of the fi
 * Thread Section
 * Tracker Update
 * Download Orchestrator
+* Sort and Merge Chunks
+* Main 
