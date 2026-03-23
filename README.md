@@ -31,6 +31,8 @@ and sends information to tell the tracker server that it has this part of the fi
     gcc -std=c11 -pthread -Wall -Wextra -o peer_downloader peer_downloader.c -lpthread
     Makfile made
 
+    ### Example Command ./peer_downloader <tracker_host> <tracker_port> <track_file> <my_ip> <my_port>
+
 * Structs
 * Constants
 * Data Structures (PeerSegment, Segment, ChunkResult, ThreadArgs, TrackInfo)
