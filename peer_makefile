@@ -1,13 +1,10 @@
-all: tracker peer1/peer peer2/peer peer3/peer
+CC = gcc
+CFLAGS = -pthread
 
-tracker: tracker.c
-#gcc -o tracker tracker.c -lpthread 
-	gcc -o tracker tracker.c -lpthread -lssl -lcrypto
+all: peer1/peer peer2/peer peer3/peer
 
-clean:
-	rm -f tracker
-
-	peer1/peer: peer.c
+# Create the directories first, then compile into each
+peer1/peer: peer.c
 	mkdir -p peer1
 	$(CC) $(CFLAGS) -o peer1/peer peer.c
 
@@ -19,4 +16,5 @@ peer3/peer: peer.c
 	mkdir -p peer3
 	$(CC) $(CFLAGS) -o peer3/peer peer.c
 
-
+clean:
+	rm -f peer1/peer peer2/peer peer3/peer

@@ -2,15 +2,13 @@
 #include <sys/types.h> //provides pid_t 
 #include <sys/socket.h> //provides socket functions 
 #include <errno.h> //provides error codes 
-#include <sys/dir.h> //directory scanning functions when implementing LIST to scan torrents 
+#include <dirent.h> //directory scanning functions
 #include <netinet/in.h>
 #include <pthread.h>
 #include <stdlib.h> 
 #include <string.h> 
 #include <unistd.h>
-#include <dirent.h> 
 #include <sys/stat.h>
-#include <unistd.h>
 #include <stdbool.h>
 #include <time.h> 
 #include <arpa/inet.h>
