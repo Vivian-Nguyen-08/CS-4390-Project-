@@ -1,8 +1,0 @@
-all: peer_downloader
-
-peer_downloader: peer_downloader.c
-#gcc -std=c++17 -pthread -Wall -Wextra -o peer_downloader peer_downloader.c -lpthread
-	gcc -std=c11 -pthread -Wall -Wextra -o peer_downloader peer_downloader.c -lpthread
-
-clean:
-	rm -f peer_downloader
