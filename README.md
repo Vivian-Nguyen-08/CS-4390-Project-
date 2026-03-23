@@ -33,6 +33,29 @@ and sends information to tell the tracker server that it has this part of the fi
 
     ### Example Command ./peer_downloader <tracker_host> <tracker_port> <track_file> <my_ip> <my_port>
 
+ ### Linux Related Commands
+ * See the process:
+    * ps aux | grep peer_downloader
+
+ * Watch threads in real time:
+    * top -H -p $(pgrep peer_downloader)
+
+ * See open network connections:
+    * ss -tp | grep peer_downloader
+    
+ * Check file size:
+    * ls -lh video.mp4
+  
+ * Check MD5 matches what the tracker reported:
+    * md5sum video.mp4
+      
+ * Remove the compiled binary:
+    * make clean
+      
+ * manually:
+    * rm -f peer_downloader
+
+### Code Structure
 * Structs
 * Constants
 * Data Structures (PeerSegment, Segment, ChunkResult, ThreadArgs, TrackInfo)
