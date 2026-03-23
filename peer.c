@@ -42,6 +42,7 @@ TrackerConfig tracker;  // loaded once from config file at startup
 
 // --- Config ---
 void load_config();                         // reads clientThreadConfig.cfg
+void resume_from_cache();                   // checks for incomplete downloads in cache
 
 // --- Tracker Connection ---
 int  connect_to_tracker();                  // opens a socket to the tracker, returns sockid
@@ -64,13 +65,14 @@ int main(int argc, char *argv[]) {
     load_config();
     printf("Connecting to tracker at %s:%d\n", tracker.ip, tracker.port);
 
-    // 2. TODO: start server thread (Person 4's job)
+    // 2. Check local cache for incomplete downloads
+    resume_from_cache();
 
-    // 3. TODO: start periodic update thread
-     pthread_t update_tid;
-     pthread_create(&update_tid, NULL, update_thread, NULL);
+    // 3. TODO: start server thread (Person 4's job)
 
-    // 4. Main loop — accept user commands for manual testing
+    // 4. Start periodic update thread (runs in background)
+    pthread_t update_tid;
+    pthread_create(&update_tid, NULL, update_thread, NULL);
     char command[MAXLINE];
     while(1) {
         printf("\nEnter command (list / get / createtracker / updatetracker / quit): ");
@@ -142,6 +144,19 @@ void load_config() {
 
     tracker.port            = atoi(port_str);
     tracker.update_interval = atoi(interval_str);
+}
+
+void resume_from_cache() {
+    // Check local cache folder for incomplete downloads
+    // Create cache directory if it doesn't exist
+    mkdir("cache", 0755);
+    
+    printf("\n[Resume] Checking cache for incomplete downloads...\n");
+    
+    // TODO: scan cache folder for .partial files
+    // TODO: prompt user to resume or discard incomplete downloads
+    // For now, just show that the function runs
+    printf("[Resume] Cache check complete\n");
 }
 
 /* ============================================================
