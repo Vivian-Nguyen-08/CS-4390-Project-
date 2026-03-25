@@ -1,3 +1,6 @@
+CC = gcc
+CFLAGS = -pthread
+
 all: tracker peer1/peer peer2/peer peer3/peer
 
 tracker: tracker.c
