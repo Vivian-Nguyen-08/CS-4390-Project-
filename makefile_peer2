@@ -1,0 +1,28 @@
+CC     = gcc
+CFLAGS = -std=c11 -pthread -Wall -Wextra
+
+# -------------------------------------------------------
+# Peer 2 — large file seeder
+# Upload port: 8002
+# -------------------------------------------------------
+all: peer2/peer
+
+peer2/peer: ../peer.c
+	mkdir -p peer2/shared peer2/cache
+	$(CC) $(CFLAGS) -o peer2/peer ../peer.c -lpthread
+	@if [ ! -f peer2/clientThreadConfig.cfg ]; then \
+	    cp ../clientThreadConfig.cfg peer2/clientThreadConfig.cfg; fi
+	@if [ ! -f peer2/serverThreadConfig.cfg ]; then \
+	    printf '8002\nshared\n1048576\n' > peer2/serverThreadConfig.cfg; fi
+	@echo "Built peer2/peer"
+	@echo ""
+	@echo "To run Peer2:"
+	@echo "  cd peer2 && ./peer Peer2"
+	@echo ""
+	@echo "Then type at the prompt (replace values with real md5 and size):"
+	@echo "  createtracker <filename> <size> <description> <md5> <ip> 8002"
+
+clean:
+	rm -f peer2/peer
+
+.PHONY: all clean

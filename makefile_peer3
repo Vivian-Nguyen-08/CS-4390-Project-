@@ -1,0 +1,30 @@
+CC     = gcc
+CFLAGS = -std=c11 -pthread -Wall -Wextra
+
+# -------------------------------------------------------
+# Peer 3 — downloader
+# Upload port: 8003
+# -------------------------------------------------------
+all: peer3/peer
+
+peer3/peer: ../peer.c
+	mkdir -p peer3/shared peer3/cache
+	$(CC) $(CFLAGS) -o peer3/peer ../peer.c -lpthread
+	@if [ ! -f peer3/clientThreadConfig.cfg ]; then \
+	    cp ../clientThreadConfig.cfg peer3/clientThreadConfig.cfg; fi
+	@if [ ! -f peer3/serverThreadConfig.cfg ]; then \
+	    printf '8003\nshared\n1048576\n' > peer3/serverThreadConfig.cfg; fi
+	@echo "Built peer3/peer"
+	@echo ""
+	@echo "To run Peer3:"
+	@echo "  cd peer3 && ./peer Peer3"
+	@echo ""
+	@echo "Then type at the prompt:"
+	@echo "  list"
+	@echo "  get <small_file>.track"
+	@echo "  get <large_file>.track"
+
+clean:
+	rm -f peer3/peer
+
+.PHONY: all clean

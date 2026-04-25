@@ -1,0 +1,28 @@
+CC     = gcc
+CFLAGS = -std=c11 -pthread -Wall -Wextra
+
+# -------------------------------------------------------
+# Peer 1 — small file seeder
+# Upload port: 8001
+# -------------------------------------------------------
+all: peer1/peer
+
+peer1/peer: ../peer.c
+	mkdir -p peer1/shared peer1/cache
+	$(CC) $(CFLAGS) -o peer1/peer ../peer.c -lpthread
+	@if [ ! -f peer1/clientThreadConfig.cfg ]; then \
+	    cp ../clientThreadConfig.cfg peer1/clientThreadConfig.cfg; fi
+	@if [ ! -f peer1/serverThreadConfig.cfg ]; then \
+	    printf '8001\nshared\n1048576\n' > peer1/serverThreadConfig.cfg; fi
+	@echo "Built peer1/peer"
+	@echo ""
+	@echo "To run Peer1:"
+	@echo "  cd peer1 && ./peer Peer1"
+	@echo ""
+	@echo "Then type at the prompt (replace values with real md5 and size):"
+	@echo "  createtracker <filename> <size> <description> <md5> <ip> 8001"
+
+clean:
+	rm -f peer1/peer
+
+.PHONY: all clean
