@@ -362,13 +362,20 @@ static void *thread_download_segment(void *arg)
         } else {
             pthread_mutex_lock(targs->lock);
             int idx = *targs->resultCount;
+            if (idx >= MAX_CHUNKS) {
+                fprintf(stderr, "[ERROR] Too many chunks — increase MAX_CHUNKS\n");
+                free(data);
+                pthread_mutex_unlock(targs->lock);
+            } else {
             targs->results[idx].byteStart= pos;
             targs->results[idx].data = data;
             targs->results[idx].size = dataSize;
             (*targs->resultCount)++;
             pthread_mutex_unlock(targs->lock);
+            pos= chunkEnd+1;
+            }
+
         }
-        pos= chunkEnd+1;
     }
     return NULL;
 }
@@ -449,24 +456,32 @@ static int downloadFile(const char *tracker_host, int tracker_port,
                si+1, info.segmentCount, seg->byteStart, seg->byteEnd);
 
         // Build chunk boundaries for this segment  
-        long chunkStarts[MAX_CHUNKS / MAX_SEGMENTS+2];
-        long chunkEnds [MAX_CHUNKS / MAX_SEGMENTS+2];
-        int chunkCount = 0;
+        // Uses Fixed chunk size "MAX_CHUNK_SIZE" instead of dynamic size change (TBD) ***
+        long segLen = seg->byteEnd - seg->byteStart + 1;
+        int chunkCount = (int)((segLen + MAX_CHUNK_SIZE- 1) / MAX_CHUNK_SIZE);
 
+        long *chunkStarts= malloc((size_t)chunkCount * sizeof(long));
+        long *chunkEnds= malloc((size_t)chunkCount * sizeof(long));
+        if (!chunkStarts || !chunkEnds) { 
+            perror("malloc"); free(chunkStarts); free(chunkEnds); free(results); return -1; }
+
+        int idx = 0;
         for (long pos = seg->byteStart; pos<= seg->byteEnd; ) {
             long ce = pos+MAX_CHUNK_SIZE-1;
             if (ce > seg->byteEnd) ce = seg->byteEnd;
-            chunkStarts[chunkCount] = pos;
-            chunkEnds [chunkCount] = ce;
-            chunkCount++;
+            chunkStarts[idx] = pos;
+            chunkEnds [idx] = ce;
+            idx++;
             pos = ce+1;
         }
 
         // Spawn one thread per chunk (mutually exclusive byte ranges)  
         pthread_t *threads= malloc((size_t)chunkCount * sizeof(pthread_t));
         ThreadArgs *targs = malloc((size_t)chunkCount * sizeof(ThreadArgs));
-        if (!threads|| !targs) { 
-            perror("malloc"); free(results); return -1; }
+        if (!threads || !targs) { 
+            free(threads); free(targs); free(chunkStarts); free(chunkEnds); free(results);
+            return -1;                                                                        // Free threads both targs and or threads null
+        }
 
         for (int c = 0; c< chunkCount; c++) {
             targs[c].segment= *seg;
@@ -479,9 +494,11 @@ static int downloadFile(const char *tracker_host, int tracker_port,
         }
         for (int c = 0; c< chunkCount; c++)
             pthread_join(threads[c], NULL);
-
+        
         free(threads);
         free(targs);
+        free(chunkStarts);
+        free(chunkEnds);
 
         // Notify tracker after each complete segment  
         send_update_tracker(tracker_host, tracker_port,
