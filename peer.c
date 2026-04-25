@@ -28,9 +28,7 @@
 #define MAX_CHUNK_SIZE   1024   /* max bytes per chunk request — enforced on both sides */
 #define MAX_PEERS        256
 #define MAX_SEGMENTS     256
-#define MAX_CHUNKS       4096
-#define MAX_FILENAME     256
-#define MAX_IP           64
+#define MAX_CHUNKS       16384
 #define MAX_REQUESTS     20
 #define MAX_SHARED_FILES 32
 #define DEFAULT_INTERVAL 900    /* 15 minutes — default updatetracker period per spec */
@@ -52,7 +50,7 @@ typedef struct {
 
 /* One peer entry parsed from a .track file — who has which byte range */
 typedef struct {
-    char peer_ip[MAX_IP]; int peer_port;
+    char peer_ip[64]; int peer_port;
     long byteStart, byteEnd; double timestamp;
 } PeerSegment;
 
@@ -69,12 +67,12 @@ typedef struct { long byteStart; char *data; long size; } ChunkResult;
 typedef struct {
     Segment segment; ChunkResult *results;
     int *resultCount; int maxResults;
-    pthread_mutex_t *lock; char filename[MAX_FILENAME];
+    pthread_mutex_t *lock; char filename[256];
 } ThreadArgs;
 
 /* Full parsed contents of a .track file */
 typedef struct {
-    char filename[MAX_FILENAME]; long filesize; char md5[64];
+    char filename[256]; long filesize; char md5[64];
     Segment segments[MAX_SEGMENTS]; int segmentCount;
 } TrackInfo;
 
@@ -98,6 +96,7 @@ static int    tcpConnect(const char *host, int port, int timeoutSec); /* open TC
 static int    connect_to_tracker(void);                               /* tcpConnect to the tracker server */
 static int    sendAll(int fd, const char *buf, size_t len);           /* send all bytes, handles short writes */
 static size_t recvExact(int fd, char *buf, size_t len);               /* receive exactly len bytes */
+static int    recvLine(int fd, char *buf, size_t maxlen);             /* receive one complete line ending in \n */
 
 /* Tracker commands — peer to tracker protocol */
 static void send_list(void);                                    /* REQ LIST   — get all available .track files */
@@ -160,17 +159,28 @@ static void load_config(void)
     upload_port = atoi(s_port);
     if (upload_port <= 0) { fprintf(stderr, "%s: Invalid upload port\n", peer_id); upload_port = 0; return; }
 
-    /* Detect local IP automatically — spec says IP is not stored in config */
-    char hostname[256];
-    if (gethostname(hostname, sizeof(hostname)) == 0) {
-        struct addrinfo hints, *res = NULL;
-        memset(&hints, 0, sizeof(hints));
-        hints.ai_family = AF_INET; hints.ai_socktype = SOCK_STREAM;
-        if (getaddrinfo(hostname, NULL, &hints, &res) == 0 && res) {
-            struct sockaddr_in *sa = (struct sockaddr_in *)res->ai_addr;
-            strncpy(upload_ip, inet_ntoa(sa->sin_addr), sizeof(upload_ip) - 1);
-            freeaddrinfo(res);
+    /* Detect local IP using UDP socket trick — more reliable than gethostname
+       which often resolves to 127.0.0.1 on Mac. We connect a UDP socket to
+       the tracker address (no data sent) and read the local address the OS
+       chose, which is the correct outbound interface IP. */
+    int udp = socket(AF_INET, SOCK_DGRAM, 0);
+    if (udp >= 0) {
+        struct sockaddr_in remote;
+        memset(&remote, 0, sizeof(remote));
+        remote.sin_family = AF_INET;
+        remote.sin_port   = htons((uint16_t)tracker.port);
+        inet_pton(AF_INET,tracker.ip, &remote.sin_addr);
+        if (connect(udp, (struct sockaddr *)&remote, sizeof(remote)) == 0) {
+            struct sockaddr_in local;
+            socklen_t local_len = sizeof(local);
+            if (getsockname(udp, (struct sockaddr *)&local, &local_len) == 0) {
+                const char *detected = inet_ntoa(local.sin_addr);
+                /* Only use if it is not a loopback address */
+                if (strncmp(detected, "127.", 4) != 0)
+                    strncpy(upload_ip, detected, sizeof(upload_ip) - 1);
+            }
         }
+        close(udp);
     }
 }
 
@@ -231,29 +241,51 @@ static size_t recvExact(int fd, char *buf, size_t len)
     return got;
 }
 
+/* recvLine: reads one character at a time until \n or connection closes.
+   This guarantees each call returns exactly one complete line regardless
+   of how TCP segments the data — fixes the bug where recv returns multiple
+   lines in one call and strncmp only checks the start of the buffer,
+   causing entire blocks of content to be silently skipped. */
+static int recvLine(int fd, char *buf, size_t maxlen)
+{
+    size_t pos = 0;
+    while (pos < maxlen - 1) {
+        char c;
+        ssize_t n = recv(fd, &c, 1, 0);
+        if (n <= 0) break;
+        buf[pos++] = c;
+        if (c == '\n') break;
+    }
+    buf[pos] = '\0';
+    return (int)pos;
+}
+
 /* ---- Tracker Commands ---- */
 
 /* send_list: sends <REQ LIST> to the tracker and prints the response.
-   The tracker replies with one line per available .track file, ending
-   with <REP LIST END>. Used to discover what files are available. */
+   Uses recvLine so each line is processed individually — fixes the bug
+   where a single recv call returns multiple lines and the end marker
+   check only tests the start of the buffer. */
 static void send_list(void)
 {
     int fd = connect_to_tracker(); if (fd < 0) return;
     sendAll(fd, "<REQ LIST>\n", 11);
-    char buf[MAXLINE]; int n;
+    char line[MAXLINE];
     printf("\n--- Available Files ---\n");
-    while ((n = recv(fd, buf, sizeof(buf) - 1, 0)) > 0) {
-        buf[n] = '\0'; printf("%s", buf);
-        if (strstr(buf, "<REP LIST END>")) break;
+    while (recvLine(fd, line, sizeof(line)) > 0) {
+        printf("%s", line);
+        if (strstr(line, "<REP LIST END>")) break;
     }
     close(fd);
 }
 
 /* send_get: sends <GET filename.track> to the tracker and saves the
-   response to cache/filename.  Strips the <REP GET BEGIN> protocol
-   header before saving so the cache file contains only clean .track
-   content.  Verifies the MD5 in <REP GET END md5> against the MD5
-   field inside the file — discards the cache file on mismatch. */
+   response to cache/filename.
+   Uses recvLine to process one line at a time — fixes the critical bug
+   where recv returns multiple lines in one call (e.g. <REP GET BEGIN>
+   plus Filename: in the same buffer), causing the entire content to be
+   skipped by the strncmp check and writing an empty cache file.
+   Verifies MD5 from <REP GET END md5> against MD5 in the tracker file. */
 static void send_get(char *filename)
 {
     int fd = connect_to_tracker(); if (fd < 0) return;
@@ -267,18 +299,22 @@ static void send_get(char *filename)
     if (!cf) fprintf(stderr, "%s: Cannot write cache file %s\n", peer_id, cache_path);
 
     char rep_md5[64] = {0}, file_md5[64] = {0};
-    char buf[MAXLINE]; int n;
+    char line[MAXLINE];
     plog("Receiving tracker file: %s", filename);
-    while ((n = recv(fd, buf, sizeof(buf) - 1, 0)) > 0) {
-        buf[n] = '\0';
-        if (strncmp(buf, "<REP GET BEGIN>", 15) == 0) continue;  /* skip protocol header */
-        if (strncmp(buf, "<REP GET END", 12) == 0) {
-            sscanf(buf, "<REP GET END %63s>", rep_md5);
+
+    while (recvLine(fd, line, sizeof(line)) > 0) {
+        /* Skip the protocol header line — do not write to cache */
+        if (strncmp(line, "<REP GET BEGIN>", 15) == 0) continue;
+        /* End marker — extract MD5 and stop */
+        if (strncmp(line, "<REP GET END", 12) == 0) {
+            sscanf(line, "<REP GET END %63s>", rep_md5);
             rep_md5[strcspn(rep_md5, ">")] = '\0';
             break;
         }
-        if (strncmp(buf, "MD5:", 4) == 0) sscanf(buf, "MD5: %63s", file_md5);
-        if (cf) fprintf(cf, "%s", buf);
+        /* Capture MD5 field from inside the tracker file */
+        if (strncmp(line, "MD5:", 4) == 0) sscanf(line, "MD5: %63s", file_md5);
+        /* Write clean content to cache */
+        if (cf) fprintf(cf, "%s", line);
     }
     if (cf) fclose(cf);
     close(fd);
@@ -503,7 +539,7 @@ static int parse_track_file(const char *path, TrackInfo *info)
     while (fgets(line, sizeof(line), fh)) {
         line[strcspn(line, "\r\n")] = '\0';
         if (line[0] == '\0' || line[0] == '#' || line[0] == '<') continue;
-        char ip[MAX_IP]; int port; long start, end; double ts;
+        char ip[64]; int port; long start, end; double ts;
         if (sscanf(line, "%63[^:]:%d:%ld:%ld:%lf", ip, &port, &start, &end, &ts) != 5) continue;
 
         /* Find or create a segment matching this byte range */
@@ -521,7 +557,7 @@ static int parse_track_file(const char *path, TrackInfo *info)
         Segment *seg = &info->segments[si];
         if (seg->peer_count < MAX_PEERS) {
             PeerSegment *ps = &seg->peers[seg->peer_count++];
-            strncpy(ps->peer_ip, ip, MAX_IP - 1); ps->peer_ip[MAX_IP-1] = '\0';
+            strncpy(ps->peer_ip, ip, 64 - 1); ps->peer_ip[64-1] = '\0';
             ps->peer_port = port; ps->byteStart = start;
             ps->byteEnd   = end;  ps->timestamp  = ts;
         }
@@ -663,7 +699,7 @@ static int downloadFile(const char *track_path)
             targs[c].resultCount       = &resultCount;
             targs[c].maxResults        = MAX_CHUNKS;
             targs[c].lock              = &lock;
-            snprintf(targs[c].filename, MAX_FILENAME, "%s", info.filename);
+            snprintf(targs[c].filename, 256, "%s", info.filename);
             if (pthread_create(&threads[c], NULL, thread_download_segment, &targs[c]) != 0) break;
             created++;
         }
