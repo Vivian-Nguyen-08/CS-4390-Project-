@@ -46,14 +46,12 @@ TRACKER_SHARED_DIR="torrents"
 LOG_DIR="logs"
 BASE_DIR="$(pwd)"
 
-PEER1_UPLOAD_PORT=8001
-PEER2_UPLOAD_PORT=8002
-PEER3_UPLOAD_PORT=8003
+PEER_PORTS=(0 8001 8002 8003 8004 8005 8006 8007 8008 8009 8010 8011 8012 8013)
 TRACKER_IP="127.0.0.1"
 
 T_WAVE1=30            # seconds: Peer3 starts
 T_WAVE2=90            # seconds: Peer1 and Peer2 stop
-DOWNLOAD_TIMEOUT=180  # seconds: wait for Peer3 before verifying
+DOWNLOAD_TIMEOUT=300  # seconds: wait for Peer3 before verifying
 
 # Read from config files
 TRACKER_PORT=$(sed -n '1p' clientThreadConfig.cfg | tr -d '[:space:]')
@@ -221,7 +219,7 @@ stop_peer() {
 # cleanup: runs on Ctrl+C or script exit
 cleanup() {
     log "Shutting down..."
-    for n in 1 2 3; do
+    for n in 1 2 3 4 5 6 7 8 9 10 11 12 13; do
         [ -n "${PEER_FDS[$n]}" ] && eval "exec ${PEER_FDS[$n]}>&-" 2>/dev/null || true
         [ -n "${PEER_PIDS[$n]}" ] && kill "${PEER_PIDS[$n]}" 2>/dev/null || true
     done
@@ -287,8 +285,8 @@ log "Tracker running"
 # =============================================================================
 log "=== t=0s: Starting Peer1 and Peer2 ==="
 
-setup_peer_dir 1 "$PEER1_UPLOAD_PORT"
-setup_peer_dir 2 "$PEER2_UPLOAD_PORT"
+setup_peer_dir 1 "${PEER_PORTS[1]}"
+setup_peer_dir 2 "${PEER_PORTS[2]}"
 
 cp "$SMALL_FILE" "peer1/${SHARED_FOLDER}/${SMALL_FILE}"
 cp "$LARGE_FILE"  "peer2/${SHARED_FOLDER}/${LARGE_FILE}"
@@ -302,8 +300,8 @@ sleep 2
 # =============================================================================
 log "Peer1 and Peer2 sending createtracker..."
 
-send_cmd 1 "createtracker ${SMALL_FILE} ${SMALL_SIZE} small_test_file ${SMALL_MD5} ${TRACKER_IP} ${PEER1_UPLOAD_PORT}"
-send_cmd 2 "createtracker ${LARGE_FILE} ${LARGE_SIZE} large_test_file ${LARGE_MD5} ${TRACKER_IP} ${PEER2_UPLOAD_PORT}"
+send_cmd 1 "createtracker ${SMALL_FILE} ${SMALL_SIZE} small_test_file ${SMALL_MD5} ${TRACKER_IP} ${PEER_PORTS[1]}"
+send_cmd 2 "createtracker ${LARGE_FILE} ${LARGE_SIZE} large_test_file ${LARGE_MD5} ${TRACKER_IP} ${PEER_PORTS[2]}"
 
 # Wait for tracker to write .track files
 sleep 5
@@ -317,25 +315,35 @@ send_cmd 2 "updatetracker ${LARGE_FILE} 0 ${LARGE_END}"
 sleep 3
 
 # =============================================================================
-# STEP 6 — t=30s: Start Peer3, list then download both files
+# STEP 6 — t=30s: Start Peer3 to Peer8 list then download both files
 # =============================================================================
 sleep_until "$T_WAVE1"
-log "=== t=$(elapsed_t)s: Starting Peer3 ==="
-setup_peer_dir 3 "$PEER3_UPLOAD_PORT"
-start_peer 3
-sleep 3   # give Peer3's upload server time to bind before sending commands
-
-send_cmd 3 "list"
-sleep 1
-send_cmd 3 "get ${SMALL_FILE}.track"
-sleep 2   # wait for small file download to complete before starting large
-send_cmd 3 "get ${LARGE_FILE}.track"
-
+log "=== t=$(elapsed_t)s: Starting Peers3-8 ==="
+for n in 3 4 5 6 7 8; do
+    setup_peer_dir "$n" "${PEER_PORTS[$n]}"
+    start_peer "$n"
+    sleep 1
+    send_cmd "$n" "list"
+    sleep 1
+    send_cmd "$n" "get ${SMALL_FILE}.track"
+    sleep 1
+    send_cmd "$n" "get ${LARGE_FILE}.track"
+done
 # =============================================================================
-# STEP 7 — t=90s: Stop Peer1 and Peer2
+# STEP 7 — t=90s: Start Peer9 to Peer13. Stop Peer1 and Peer2 
 # =============================================================================
 sleep_until "$T_WAVE2"
-log "=== t=$(elapsed_t)s: Stopping Peer1 and Peer2 ==="
+log "=== t=$(elapsed_t)s: Starting Peers9–13 AND stopping Peers 1 & 2 ==="
+for n in 9 10 11 12 13; do
+    setup_peer_dir "$n" "${PEER_PORTS[$n]}"
+    start_peer "$n"
+    sleep 1
+    send_cmd "$n" "list"
+    sleep 1
+    send_cmd "$n" "get ${SMALL_FILE}.track"
+    sleep 1
+    send_cmd "$n" "get ${LARGE_FILE}.track"
+done
 stop_peer 1
 stop_peer 2
 
@@ -344,25 +352,31 @@ stop_peer 2
 # Polls every 5 seconds — checks that both files have reached their
 # expected sizes before stopping, not just that they exist
 # =============================================================================
-log "Waiting up to ${DOWNLOAD_TIMEOUT}s for Peer3 to complete downloads..."
+log "Waiting up to ${DOWNLOAD_TIMEOUT}s for Peer3-13 to complete downloads..."
 
 elapsed=0
 while [ $elapsed -lt $DOWNLOAD_TIMEOUT ]; do
-    small_done=false
-    large_done=false
-
-    # Check file exists AND has reached the expected size
-    if [ -f "peer3/${SHARED_FOLDER}/${SMALL_FILE}" ]; then
-        actual_small_size=$(wc -c < "peer3/${SHARED_FOLDER}/${SMALL_FILE}" | tr -d ' ')
-        [ "$actual_small_size" -ge "$SMALL_SIZE" ] && small_done=true
-    fi
-    if [ -f "peer3/${SHARED_FOLDER}/${LARGE_FILE}" ]; then
-        actual_large_size=$(wc -c < "peer3/${SHARED_FOLDER}/${LARGE_FILE}" | tr -d ' ')
-        [ "$actual_large_size" -ge "$LARGE_SIZE" ] && large_done=true
-    fi
-
-    if $small_done && $large_done; then
-        log "Both files downloaded completely — stopping at ${elapsed}s"
+   all_done=true
+    for n in 3 4 5 6 7 8 9 10 11 12 13; do
+        small_path="peer${n}/${SHARED_FOLDER}/${SMALL_FILE}"
+        large_path="peer${n}/${SHARED_FOLDER}/${LARGE_FILE}"
+        small_ok=false
+        large_ok=false
+        if [ -f "$small_path" ]; then
+            sz=$(wc -c < "$small_path" | tr -d ' ')
+            [ "$sz" -ge "$SMALL_SIZE" ] && small_ok=true
+        fi
+        if [ -f "$large_path" ]; then
+            sz=$(wc -c < "$large_path" | tr -d ' ')
+            [ "$sz" -ge "$LARGE_SIZE" ] && large_ok=true
+        fi
+        if ! $small_ok || ! $large_ok; then
+            all_done=false
+            break
+        fi
+    done
+    if $all_done; then
+        log "All Peers 3–13 completed downloads at ${elapsed}s"
         break
     fi
 
@@ -371,8 +385,10 @@ while [ $elapsed -lt $DOWNLOAD_TIMEOUT ]; do
 done
 
 # Send quit to Peer3 immediately once downloads are done
-log "Stopping Peer3..."
-stop_peer 3
+log "Stopping Peers 3-13..."
+for n in 3 4 5 6 7 8 9 10 11 12 13; do
+    stop_peer "$n"
+done
 sleep 1
 
 # =============================================================================
@@ -381,47 +397,47 @@ sleep 1
 sleep 3   # give OS time to fully flush file writes
 log "=== Verifying downloads ==="
 
-PEER3_SMALL="peer3/${SHARED_FOLDER}/${SMALL_FILE}"
-PEER3_LARGE="peer3/${SHARED_FOLDER}/${LARGE_FILE}"
+all_pass=true
+for n in 3 4 5 6 7 8 9 10 11 12 13; do
+    small_path="peer${n}/${SHARED_FOLDER}/${SMALL_FILE}"
+    large_path="peer${n}/${SHARED_FOLDER}/${LARGE_FILE}"
 
-# Print what we are checking so failures are easy to diagnose
-log "Checking: ${PEER3_SMALL}"
-log "Checking: ${PEER3_LARGE}"
+    small_ok="FAIL"
+    large_ok="FAIL"
 
-# Check small file
-if [ ! -f "$PEER3_SMALL" ]; then
-    actual_small=""
-    log "MISSING: ${PEER3_SMALL} does not exist"
+    # Check small file
+    if [ ! -f "$small_path" ]; then
+        log "MISSING: ${small_path} does not exist"
+    else
+        actual_small_size=$(wc -c < "$small_path" | tr -d ' ')
+        got_small=$(md5_file "$small_path")
+        log "Peer${n} found ${SMALL_FILE}: size=${actual_small_size} (expected=${SMALL_SIZE}) md5=${got_small}"
+        [ "$got_small" = "$SMALL_MD5" ] && small_ok="OK"
+    fi
+
+    # Check large file
+    if [ ! -f "$large_path" ]; then
+        log "MISSING: ${large_path} does not exist"
+    else
+        actual_large_size=$(wc -c < "$large_path" | tr -d ' ')
+        got_large=$(md5_file "$large_path")
+        log "Peer${n} found ${LARGE_FILE}: size=${actual_large_size} (expected=${LARGE_SIZE}) md5=${got_large}"
+        [ "$got_large" = "$LARGE_MD5" ] && large_ok="OK"
+    fi
+
+    echo "Peer${n}: ${SMALL_FILE} [${small_ok}]  ${LARGE_FILE} [${large_ok}]"
+
+    if [ "$small_ok" != "OK" ] || [ "$large_ok" != "OK" ]; then
+        all_pass=false
+    fi
+done
+
+if $all_pass; then
+    log "All downloads verified successfully across all 11 downloader peers"
 else
-    actual_small_size=$(wc -c < "$PEER3_SMALL" | tr -d ' ')
-    actual_small=$(md5_file "$PEER3_SMALL")
-    log "Found ${SMALL_FILE}: size=${actual_small_size} (expected=${SMALL_SIZE}) md5=${actual_small}"
-fi
-
-# Check large file
-if [ ! -f "$PEER3_LARGE" ]; then
-    actual_large=""
-    log "MISSING: ${PEER3_LARGE} does not exist"
-else
-    actual_large_size=$(wc -c < "$PEER3_LARGE" | tr -d ' ')
-    actual_large=$(md5_file "$PEER3_LARGE")
-    log "Found ${LARGE_FILE}: size=${actual_large_size} (expected=${LARGE_SIZE}) md5=${actual_large}"
-fi
-
-small_ok="FAIL"; large_ok="FAIL"
-[ "$actual_small" = "$SMALL_MD5" ] && small_ok="OK"
-[ "$actual_large" = "$LARGE_MD5" ] && large_ok="OK"
-
-echo "Peer3: ${SMALL_FILE} [${small_ok}]  ${LARGE_FILE} [${large_ok}]"
-
-if [ "$small_ok" = "OK" ] && [ "$large_ok" = "OK" ]; then
-    log "All downloads verified successfully"
-else
-    log "WARNING: some downloads failed MD5 check"
-    log "Expected  small md5: ${SMALL_MD5}"
-    log "Got       small md5: ${actual_small}"
-    log "Expected  large md5: ${LARGE_MD5}"
-    log "Got       large md5: ${actual_large}"
+    log "WARNING: some downloads failed MD5 check — check logs in ${LOG_DIR}/"
+    log "Expected small md5: ${SMALL_MD5}"
+    log "Expected large md5: ${LARGE_MD5}"
 fi
 
 log "=== Demo complete. Logs in ${LOG_DIR}/ ==="

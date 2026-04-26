@@ -66,8 +66,8 @@ PROJECT_DIR="$HOME/project"   # absolute path to project on all machines
 
 TRACKER_MACHINE="192.168.1.1" # Machine 1 — tracker (also runs this script)
 PEER1_MACHINE="192.168.1.2"   # Machine 2 — Peer1
-PEER2_MACHINE="192.168.1.3"   # Machine 3 — Peer2
-PEER3_MACHINE="192.168.1.4"   # Machine 4 — Peer3
+PEER2_MACHINE="192.168.1.2"   # Machine 3 — Peer2
+PEERS_MACHINE="192.168.1.2"   # Machine 4 — Peer3
 
 # =============================================================================
 # DEMO CONFIG — files and timing
@@ -77,13 +77,12 @@ LARGE_FILE="demo.mp4"         # large file on Machine 3 in PROJECT_DIR
 TRACKER_SHARED_DIR="torrents"
 LOG_DIR="logs"
 
-PEER1_UPLOAD_PORT=8001
-PEER2_UPLOAD_PORT=8002
-PEER3_UPLOAD_PORT=8003
+PEER_PORTS=(0 8001 8002 8003 8004 8005 8006 8007 8008 8009 8010 8011 8012 8013)
+
 
 T_WAVE1=30            # seconds until Peer3 starts
 T_WAVE2=90            # seconds until Peer1 and Peer2 stop
-DOWNLOAD_TIMEOUT=180  # seconds to wait for Peer3 after T_WAVE2
+DOWNLOAD_TIMEOUT=300  # seconds to wait for Peer3 after T_WAVE2
 
 # =============================================================================
 # READ PEER SETTINGS FROM LOCAL CONFIG FILES
@@ -382,8 +381,8 @@ else
          cp ${PROJECT_DIR}/${LARGE_FILE} ${PROJECT_DIR}/peer2/${SHARED_FOLDER}/${LARGE_FILE}"
 fi
 
-setup_peer_dir 1 "$PEER1_MACHINE" "$PEER1_UPLOAD_PORT"
-setup_peer_dir 2 "$PEER2_MACHINE" "$PEER2_UPLOAD_PORT"
+setup_peer_dir 1 "$PEER1_MACHINE" "${PEER_PORTS[1]}"
+setup_peer_dir 2 "$PEER2_MACHINE" "${PEER_PORTS[2]}"
 start_peer 1 "$PEER1_MACHINE"
 start_peer 2 "$PEER2_MACHINE"
 sleep 2
@@ -393,73 +392,70 @@ sleep 2
 # =============================================================================
 log "Peer1 and Peer2 sending createtracker..."
 send_cmd 1 "$PEER1_MACHINE" \
-    "createtracker ${SMALL_FILE} ${SMALL_SIZE} small_test_file ${SMALL_MD5} ${PEER1_MACHINE} ${PEER1_UPLOAD_PORT}"
+    "createtracker ${SMALL_FILE} ${SMALL_SIZE} small_test_file ${SMALL_MD5} ${PEER1_MACHINE} ${PEER_PORTS[1]}"
 send_cmd 2 "$PEER2_MACHINE" \
-    "createtracker ${LARGE_FILE} ${LARGE_SIZE} large_test_file ${LARGE_MD5} ${PEER2_MACHINE} ${PEER2_UPLOAD_PORT}"
+    "createtracker ${LARGE_FILE} ${LARGE_SIZE} large_test_file ${LARGE_MD5} ${PEER2_MACHINE} ${PEER_PORTS[2]}"
 sleep 2
 
 # =============================================================================
 # STEP 7 — t=30s: Start Peer3, list then download both files
 # =============================================================================
-log "Waiting ${T_WAVE1}s before starting Peer3..."
+log "Waiting ${T_WAVE1}s before starting Peer3-8."
 sleep "$T_WAVE1"
 
-log "=== t=${T_WAVE1}s: Starting Peer3 on ${PEER3_MACHINE} ==="
-setup_peer_dir 3 "$PEER3_MACHINE" "$PEER3_UPLOAD_PORT"
-start_peer 3 "$PEER3_MACHINE"
-sleep 1
-
-send_cmd 3 "$PEER3_MACHINE" "list"
-sleep 0.5
-send_cmd 3 "$PEER3_MACHINE" "get ${SMALL_FILE}.track"
-sleep 1
-send_cmd 3 "$PEER3_MACHINE" "get ${LARGE_FILE}.track"
-
+log "=== t=${T_WAVE1}s: Starting Peer3-8 on ${PEER3_MACHINE} ==="
+for n in 3 4 5 6 7 8; do
+    setup_peer_dir "$n" "$PEERS_MACHINE" "${PEER_PORTS[$n]}"
+    start_peer "$n" "$PEERS_MACHINE"
+    sleep 1
+    send_cmd "$n" "$PEERS_MACHINE" "list"
+    sleep 1
+    send_cmd "$n" "$PEERS_MACHINE" "get ${SMALL_FILE}.track"
+    sleep 1
+    send_cmd "$n" "$PEERS_MACHINE" "get ${LARGE_FILE}.track"
+done
 # =============================================================================
 # STEP 8 — t=90s: Stop Peer1 and Peer2
 # =============================================================================
 WAVE2_WAIT=$((T_WAVE2 - T_WAVE1))
-log "Waiting ${WAVE2_WAIT}s before stopping Peer1 and Peer2..."
-sleep "$WAVE2_WAIT"
-
-log "=== t=${T_WAVE2}s: Stopping Peer1 and Peer2 ==="
+log "=== t=$(elapsed_t)s: Starting Peers9–13 AND stopping Peers 1 & 2 ==="
+for n in 9 10 11 12 13; do
+    setup_peer_dir "$n" "$PEERS_MACHINE" "${PEER_PORTS[$n]}"
+    start_peer "$n" "$PEERS_MACHINE"
+    sleep 1
+    send_cmd "$n" "$PEERS_MACHINE" "list"
+    sleep 1
+    send_cmd "$n" "$PEERS_MACHINE" "get ${SMALL_FILE}.track"
+    sleep 1
+    send_cmd "$n" "$PEERS_MACHINE" "get ${LARGE_FILE}.track"
+done
 stop_peer 1 "$PEER1_MACHINE"
 stop_peer 2 "$PEER2_MACHINE"
 
 # =============================================================================
 # STEP 9 — Wait for Peer3 to finish then stop it
 # =============================================================================
-log "Waiting up to ${DOWNLOAD_TIMEOUT}s for Peer3 to complete downloads..."
+log "Waiting ${DOWNLOAD_TIMEOUT}s for Peers 3–13 to complete..."
 sleep "$DOWNLOAD_TIMEOUT"
-
-log "Stopping Peer3..."
-stop_peer 3 "$PEER3_MACHINE"
+for n in 3 4 5 6 7 8 9 10 11 12 13; do
+    stop_peer "$n" "$PEERS_MACHINE"
+done
+sleep 3
 
 # =============================================================================
 # STEP 10 — Verify MD5 of downloaded files on Peer3
 # =============================================================================
 log "=== Verifying downloads ==="
 
-if is_local "$PEER3_MACHINE"; then
-    actual_small=$(md5_file "peer3/${SHARED_FOLDER}/${SMALL_FILE}" 2>/dev/null)
-    actual_large=$(md5_file "peer3/${SHARED_FOLDER}/${LARGE_FILE}"  2>/dev/null)
-else
-    actual_small=$(remote_md5 "$PEER3_MACHINE" \
-        "${PROJECT_DIR}/peer3/${SHARED_FOLDER}/${SMALL_FILE}")
-    actual_large=$(remote_md5 "$PEER3_MACHINE" \
-        "${PROJECT_DIR}/peer3/${SHARED_FOLDER}/${LARGE_FILE}")
-fi
-
-small_ok="FAIL"; large_ok="FAIL"
-[ "$actual_small" = "$SMALL_MD5" ] && small_ok="OK"
-[ "$actual_large" = "$LARGE_MD5" ] && large_ok="OK"
-
-echo "Peer3: ${SMALL_FILE} [${small_ok}]  ${LARGE_FILE} [${large_ok}]"
-
-if [ "$small_ok" = "OK" ] && [ "$large_ok" = "OK" ]; then
-    log "All downloads verified successfully"
-else
-    log "WARNING: some downloads failed MD5 check"
-fi
-
-log "=== Demo complete. Logs in ${LOG_DIR}/ ==="
+all_pass=true
+for n in 3 4 5 6 7 8 9 10 11 12 13; do
+    small_ok="FAIL"; large_ok="FAIL"
+    actual_small=$(remote_md5 "$PEERS_MACHINE" "${PROJECT_DIR}/peer${n}/${SHARED_FOLDER}/${SMALL_FILE}")
+    actual_large=$(remote_md5 "$PEERS_MACHINE" "${PROJECT_DIR}/peer${n}/${SHARED_FOLDER}/${LARGE_FILE}")
+    [ "$actual_small" = "$SMALL_MD5" ] && small_ok="OK"
+    [ "$actual_large" = "$LARGE_MD5" ] && large_ok="OK"
+    echo "Peer${n}: ${SMALL_FILE} [${small_ok}]  ${LARGE_FILE} [${large_ok}]"
+    if [ "$small_ok" != "OK" ] || [ "$large_ok" != "OK" ]; then
+        all_pass=false
+    fi
+done
