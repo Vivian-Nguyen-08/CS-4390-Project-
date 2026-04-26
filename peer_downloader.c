@@ -51,7 +51,7 @@ and sends information to tell the tracker server that it has this part of the fi
 #include <unistd.h>
 
  // Constants & limits
-#define MAX_CHUNK_SIZE   1024
+#define MAX_CHUNK_SIZE   8192L
 #define MAX_PEERS        256
 #define MAX_SEGMENTS     256
 #define MAX_CHUNKS       4096
