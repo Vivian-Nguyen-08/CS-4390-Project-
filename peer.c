@@ -28,7 +28,6 @@
 #define MAX_CHUNK_SIZE   1024   /* max bytes per chunk request — enforced on both sides */
 #define MAX_PEERS        256
 #define MAX_SEGMENTS     256
-#define MAX_CHUNKS       16384
 #define MAX_REQUESTS     20
 #define MAX_SHARED_FILES 32
 #define DEFAULT_INTERVAL 900    /* 15 minutes — default updatetracker period per spec */
@@ -667,7 +666,10 @@ static int downloadFile(const char *track_path)
     if (parse_track_file(track_path, &info) < 0) return -1;
     plog("Downloading %s  size=%ld  segments=%d", info.filename, info.filesize, info.segmentCount);
 
-    ChunkResult *results = calloc(MAX_CHUNKS, sizeof(ChunkResult));
+    /* Compute exact chunk count from filesize so results array is always
+       large enough regardless of file size — replaces fixed MAX_CHUNKS */
+    long totalChunks = (info.filesize / MAX_CHUNK_SIZE) + 2;
+    ChunkResult *results = calloc((size_t)totalChunks, sizeof(ChunkResult));
     if (!results) { perror("calloc"); return -1; }
     int resultCount = 0;
     pthread_mutex_t lock; pthread_mutex_init(&lock, NULL);
@@ -676,7 +678,8 @@ static int downloadFile(const char *track_path)
         Segment *seg = &info.segments[si];
         plog("[Segment %d/%d] bytes %ld-%ld", si+1, info.segmentCount, seg->byteStart, seg->byteEnd);
 
-        int maxCPS = MAX_CHUNKS / (info.segmentCount > 0 ? info.segmentCount : 1) + 2;
+        long seg_bytes = seg->byteEnd - seg->byteStart + 1;
+        int maxCPS = (int)(seg_bytes / MAX_CHUNK_SIZE) + 2;
         long *cs = malloc((size_t)maxCPS * sizeof(long));
         long *ce = malloc((size_t)maxCPS * sizeof(long));
         if (!cs || !ce) { free(cs); free(ce); free(results); pthread_mutex_destroy(&lock); return -1; }
@@ -702,7 +705,7 @@ static int downloadFile(const char *track_path)
             targs[c].segment.byteEnd   = ce[c];
             targs[c].results           = results;
             targs[c].resultCount       = &resultCount;
-            targs[c].maxResults        = MAX_CHUNKS;
+            targs[c].maxResults        = (int)totalChunks;
             targs[c].lock              = &lock;
             snprintf(targs[c].filename, 256, "%s", info.filename);
             if (pthread_create(&threads[c], NULL, thread_download_segment, &targs[c]) != 0) break;
