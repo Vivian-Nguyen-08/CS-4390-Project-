@@ -476,9 +476,7 @@ done
 if $all_pass; then
     log "All downloads verified successfully across all 11 downloader peers"
 else
-    log "WARNING: some downloads failed MD5 check — check logs in ${LOG_DIR}/"
-    log "Expected small md5: ${SMALL_MD5}"
-    log "Expected large md5: ${LARGE_MD5}"
+    log "WARNING: some downloads failed MD5 check"
 fi
 
 log "=== Demo complete. Logs in ${LOG_DIR}/ ==="

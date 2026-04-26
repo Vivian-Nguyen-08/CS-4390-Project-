@@ -400,17 +400,20 @@ for n in 3 4 5 6 7 8 9 10 11 12 13; do
     small_path="peer${n}/${SHARED_FOLDER}/${SMALL_FILE}"
     large_path="peer${n}/${SHARED_FOLDER}/${LARGE_FILE}"
 
-    small_ok="FAIL"
-    large_ok="FAIL"
+    log "Checking: ${small_path}"
+    log "Checking: ${large_path}"
+
+    small_ok="FAIL"; large_ok="FAIL"
+    actual_small=""; actual_large=""
 
     # Check small file
     if [ ! -f "$small_path" ]; then
         log "MISSING: ${small_path} does not exist"
     else
         actual_small_size=$(wc -c < "$small_path" | tr -d ' ')
-        got_small=$(md5_file "$small_path")
-        log "Peer${n} found ${SMALL_FILE}: size=${actual_small_size} (expected=${SMALL_SIZE}) md5=${got_small}"
-        [ "$got_small" = "$SMALL_MD5" ] && small_ok="OK"
+        actual_small=$(md5_file "$small_path")
+        log "Peer${n} found ${SMALL_FILE}: size=${actual_small_size} (expected=${SMALL_SIZE}) md5=${actual_small}"
+        [ "$actual_small" = "$SMALL_MD5" ] && small_ok="OK"
     fi
 
     # Check large file
@@ -418,15 +421,20 @@ for n in 3 4 5 6 7 8 9 10 11 12 13; do
         log "MISSING: ${large_path} does not exist"
     else
         actual_large_size=$(wc -c < "$large_path" | tr -d ' ')
-        got_large=$(md5_file "$large_path")
-        log "Peer${n} found ${LARGE_FILE}: size=${actual_large_size} (expected=${LARGE_SIZE}) md5=${got_large}"
-        [ "$got_large" = "$LARGE_MD5" ] && large_ok="OK"
+        actual_large=$(md5_file "$large_path")
+        log "Peer${n} found ${LARGE_FILE}: size=${actual_large_size} (expected=${LARGE_SIZE}) md5=${actual_large}"
+        [ "$actual_large" = "$LARGE_MD5" ] && large_ok="OK"
     fi
 
     echo "Peer${n}: ${SMALL_FILE} [${small_ok}]  ${LARGE_FILE} [${large_ok}]"
 
     if [ "$small_ok" != "OK" ] || [ "$large_ok" != "OK" ]; then
         all_pass=false
+        log "WARNING: Peer${n} failed MD5 check"
+        log "Expected  small md5: ${SMALL_MD5}"
+        log "Got       small md5: ${actual_small}"
+        log "Expected  large md5: ${LARGE_MD5}"
+        log "Got       large md5: ${actual_large}"
     fi
 done
 
@@ -434,8 +442,6 @@ if $all_pass; then
     log "All downloads verified successfully across all 11 downloader peers"
 else
     log "WARNING: some downloads failed MD5 check — check logs in ${LOG_DIR}/"
-    log "Expected small md5: ${SMALL_MD5}"
-    log "Expected large md5: ${LARGE_MD5}"
 fi
 
 log "=== Demo complete. Logs in ${LOG_DIR}/ ==="
