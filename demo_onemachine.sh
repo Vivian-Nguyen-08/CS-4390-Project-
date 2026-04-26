@@ -5,11 +5,11 @@
 # NO SSH REQUIRED — everything runs locally using named pipes (FIFOs)
 #
 # HOW IT WORKS:
-#   This script opens 4 terminal windows automatically:
+#   This script opens 14 terminal windows automatically:
 #     Terminal 1 — Tracker
 #     Terminal 2 — Peer1 (seeds small file)
 #     Terminal 3 — Peer2 (seeds large file)
-#     Terminal 4 — Peer3 (downloader)
+#     Terminal 4-14 — Peer3-Peer13 (downloader)
 #
 #   Commands are sent to each peer through a named pipe (FIFO).
 #   Each peer's output appears in its own terminal window.
@@ -24,13 +24,11 @@
 #   Linux — gnome-terminal or xterm
 #
 # TIMELINE:
-#   t=0s    Tracker starts
-#           Peer1 starts — seeds work.txt
-#           Peer2 starts — seeds demo.mp4
-#           Both send createtracker to tracker
-#   t=30s   Peer3 starts — sends list, downloads both files
-#   t=90s   Peer1 and Peer2 terminate
-#   t=90s + DOWNLOAD_TIMEOUT   Peer3 terminates, downloads verified
+#   t=0s    Tracker starts, Peer1 and Peer2 start and send createtracker
+#   t=30s   Peers 3-8 start, send list, download both files
+#   t=90s   Peers 9-13 start, send list, download both files
+#             Peer1 and Peer2 terminate
+#   t=90s + DOWNLOAD_TIMEOUT   All peers terminate, MD5 verified
 # =============================================================================
 
 if [ "${BASH_VERSINFO[0]}" -lt 3 ]; then

@@ -8,31 +8,26 @@
 #
 # MACHINE LAYOUT:
 #   Machine 1 — runs the tracker AND this script
-#   Machine 2 — runs Peer1 (seeds the small file)
-#   Machine 3 — runs Peer2 (seeds the large file)
-#   Machine 4 — runs Peer3 (downloads both files)
+#   Machine 2 — runs all peers (Peer1 through Peer13)
 #
-# STEP 1 — Clone the project on all 4 machines
+# STEP 1 — Clone the project on both machines
 #   On each machine run:
 #     git clone <your-github-url> ~/project
-#   Make sure work.txt is in ~/project on Machine 2
-#   Make sure demo.mp4 is in ~/project on Machine 3
+#   Make sure work.txt and demo.mp4 are in ~/project on Machine 2
 #
 # STEP 2 — Set the machine IPs below
 #   Find each machine's IP with:   ip addr   (Linux)  or   ifconfig   (Mac)
-#   Edit the four MACHINE IP lines in the CONFIG section below.
+#   Edit the MACHINE IP lines in the CONFIG section below.
 #
 # STEP 3 — Set the SSH username below
-#   All 4 machines must have the same username, or edit SSH_USER per machine.
+#   Both machines must have the same username, or edit SSH_USER per machine.
 #
-# STEP 4 — Set up passwordless SSH from Machine 1 to Machines 2, 3, 4
+# STEP 4 — Set up passwordless SSH from Machine 1 to Machine 2
 #   Run these commands ONCE on Machine 1:
 #     ssh-keygen -t rsa -b 4096        (press Enter for all prompts)
-#     ssh-copy-id <SSH_USER>@<PEER1_MACHINE>
-#     ssh-copy-id <SSH_USER>@<PEER2_MACHINE>
-#     ssh-copy-id <SSH_USER>@<PEER3_MACHINE>
+#     ssh-copy-id <SSH_USER>@<PEERS_MACHINE>
 #   Test it works (should print "ok" with no password prompt):
-#     ssh <SSH_USER>@<PEER1_MACHINE> echo ok
+#     ssh <SSH_USER>@<PEERS_MACHINE> echo ok
 #
 # STEP 5 — Install OpenSSL on all machines if not present (tracker compile needs it)
 #   Linux:   sudo apt install libssl-dev
@@ -42,16 +37,12 @@
 #     chmod +x demo.sh
 #     bash demo.sh
 #
-# TESTING ON ONE MACHINE (single laptop):
-#   Set all four MACHINE IPs to 127.0.0.1
-#   Skip the ssh-copy-id step (SSH to localhost uses your own key)
-#   Run:  bash demo.sh
-#
 # TIMELINE:
 #   t=0s    Tracker starts, Peer1 and Peer2 start and send createtracker
-#   t=30s   Peer3 starts, sends list, downloads both files
-#   t=90s   Peer1 and Peer2 terminate
-#   t=90s + DOWNLOAD_TIMEOUT   Peer3 terminates, MD5 verified
+#   t=30s   Peers 3-8 start, send list, download both files
+#   t=90s   Peers 9-13 start, send list, download both files
+#             Peer1 and Peer2 terminate
+#   t=90s + DOWNLOAD_TIMEOUT   All peers terminate, MD5 verified
 # =============================================================================
 
 if [ "${BASH_VERSINFO[0]}" -lt 3 ]; then
@@ -65,29 +56,26 @@ SSH_USER="student"            # SSH username on all machines
 PROJECT_DIR="$HOME/project"   # absolute path to project on all machines
 
 TRACKER_MACHINE="192.168.1.1" # Machine 1 — tracker (also runs this script)
-PEER1_MACHINE="192.168.1.2"   # Machine 2 — Peer1
-PEER2_MACHINE="192.168.1.2"   # Machine 3 — Peer2
-PEERS_MACHINE="192.168.1.2"   # Machine 4 — Peer3
+PEER1_MACHINE="192.168.1.2"   # Machine 2 — seeds small file
+PEER2_MACHINE="192.168.1.2"   # Machine 2 — seeds large file
+PEERS_MACHINE="192.168.1.2"   # Machine 2 — all peers 3-13 run here
 
 # =============================================================================
 # DEMO CONFIG — files and timing
 # =============================================================================
-SMALL_FILE="work.txt"         # small file on Machine 2 in PROJECT_DIR
-LARGE_FILE="demo.mp4"         # large file on Machine 3 in PROJECT_DIR
+SMALL_FILE="work.txt"
+LARGE_FILE="demo.mp4"
 TRACKER_SHARED_DIR="torrents"
 LOG_DIR="logs"
 
 PEER_PORTS=(0 8001 8002 8003 8004 8005 8006 8007 8008 8009 8010 8011 8012 8013)
 
-
-T_WAVE1=30            # seconds until Peer3 starts
-T_WAVE2=90            # seconds until Peer1 and Peer2 stop
-DOWNLOAD_TIMEOUT=300  # seconds to wait for Peer3 after T_WAVE2
+T_WAVE1=30            # seconds until Peers 3-8 start
+T_WAVE2=90            # seconds until Peers 9-13 start AND Peers 1-2 stop
+DOWNLOAD_TIMEOUT=300  # seconds to wait for all downloaders after T_WAVE2
 
 # =============================================================================
 # READ PEER SETTINGS FROM LOCAL CONFIG FILES
-# These values are written into each peer's config on its machine so
-# peer.c reads the same values everywhere
 # =============================================================================
 TRACKER_PORT=$(sed -n '1p' clientThreadConfig.cfg | tr -d '[:space:]')
 UPDATE_INTERVAL=$(sed -n '3p' clientThreadConfig.cfg | tr -d '[:space:]')
@@ -114,6 +102,19 @@ ts()  { date +%H:%M:%S; }
 log() { echo "[DEMO $(ts)] $*"; }
 die() { echo "[DEMO ERROR] $*" >&2; exit 1; }
 
+DEMO_START=""
+
+elapsed_t() { echo $(( $(date +%s) - DEMO_START )); }
+
+sleep_until() {
+    local target=$1
+    local remaining=$(( target - $(elapsed_t) ))
+    if [ $remaining -gt 0 ]; then
+        log "Sleeping ${remaining}s (target t=${target}s, elapsed=$(elapsed_t)s)"
+        sleep "$remaining"
+    fi
+}
+
 md5_file() {
     if command -v md5sum >/dev/null 2>&1; then
         md5sum "$1" | awk '{print $1}'
@@ -133,8 +134,6 @@ openssl_flags() {
     echo ""
 }
 
-# run_remote: run a shell command on a remote machine via SSH
-# Usage: run_remote <host> <command>
 run_remote() {
     local host=$1; shift
     ssh -o StrictHostKeyChecking=no \
@@ -142,7 +141,6 @@ run_remote() {
         "${SSH_USER}@${host}" "$@"
 }
 
-# remote_md5: get MD5 of a file on a remote machine
 remote_md5() {
     local host=$1 filepath=$2
     run_remote "$host" \
@@ -151,21 +149,17 @@ remote_md5() {
          else md5 -q ${filepath}; fi"
 }
 
-# remote_filesize: get file size in bytes on a remote machine
 remote_filesize() {
     local host=$1 filepath=$2
     run_remote "$host" "wc -c < ${filepath} | tr -d ' '"
 }
 
-# is_local: returns true if host is localhost / 127.0.0.1
 is_local() {
     [[ "$1" == "127.0.0.1" || "$1" == "localhost" ]]
 }
 
 # =============================================================================
 # PEER CONTROL
-# Local peers use FIFOs directly.
-# Remote peers use FIFOs over SSH.
 # =============================================================================
 PEER_PIDS=()
 PEER_FDS=()
@@ -179,6 +173,7 @@ setup_peer_dir() {
 
     if is_local "$host"; then
         mkdir -p "${dir}/${SHARED_FOLDER}" "${dir}/${CACHE_DIR}" "${PROJECT_DIR}/${LOG_DIR}"
+        rm -f "${dir}/${CACHE_DIR}"/*.track 2>/dev/null || true
         printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n' \
             "$TRACKER_PORT" "$TRACKER_MACHINE" "$UPDATE_INTERVAL" \
             "$MAX_CHUNKS" "$MAX_PEERS" "$MAX_SEGMENTS" "$CACHE_DIR" \
@@ -190,6 +185,7 @@ setup_peer_dir() {
     else
         run_remote "$host" "
             mkdir -p ${dir}/${SHARED_FOLDER} ${dir}/${CACHE_DIR} ${PROJECT_DIR}/${LOG_DIR}
+            rm -f ${dir}/${CACHE_DIR}/*.track 2>/dev/null || true
             printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n' \
                 '${TRACKER_PORT}' '${TRACKER_MACHINE}' '${UPDATE_INTERVAL}' \
                 '${MAX_CHUNKS}' '${MAX_PEERS}' '${MAX_SEGMENTS}' '${CACHE_DIR}' \
@@ -246,12 +242,13 @@ send_cmd() {
 
 stop_peer() {
     local n=$1 host=$2
+    local fd=${PEER_FDS[$n]}
+    [ -z "$fd" ] && return
     log "Stopping Peer${n} on ${host}..."
     send_cmd "$n" "$host" "quit"
     sleep 2
 
     if is_local "$host"; then
-        local fd=${PEER_FDS[$n]}
         [ -n "$fd" ] && eval "exec ${fd}>&-" 2>/dev/null || true
         [ -n "${PEER_PIDS[$n]}" ] && wait "${PEER_PIDS[$n]}" 2>/dev/null || true
     else
@@ -265,11 +262,11 @@ stop_peer() {
 
 cleanup() {
     log "Shutting down..."
-    for n in 1 2 3; do
+    for n in 1 2 3 4 5 6 7 8 9 10 11 12 13; do
         [ -n "${PEER_FDS[$n]}" ] && eval "exec ${PEER_FDS[$n]}>&-" 2>/dev/null || true
         [ -n "${PEER_PIDS[$n]}" ] && kill "${PEER_PIDS[$n]}" 2>/dev/null || true
     done
-    for host in "$PEER1_MACHINE" "$PEER2_MACHINE" "$PEER3_MACHINE"; do
+    for host in "$PEER1_MACHINE" "$PEER2_MACHINE" "$PEERS_MACHINE"; do
         is_local "$host" && continue
         run_remote "$host" "pkill -f 'peer Peer' 2>/dev/null || true" 2>/dev/null || true
     done
@@ -281,7 +278,7 @@ trap cleanup EXIT INT TERM
 # STEP 0 — Verify SSH connectivity to all peer machines
 # =============================================================================
 log "Verifying SSH connectivity..."
-for host in "$PEER1_MACHINE" "$PEER2_MACHINE" "$PEER3_MACHINE"; do
+for host in "$PEER1_MACHINE" "$PEER2_MACHINE" "$PEERS_MACHINE"; do
     is_local "$host" && continue
     run_remote "$host" "echo ok" > /dev/null 2>&1 \
         || die "Cannot SSH to ${SSH_USER}@${host}. Check SSH keys (see instructions at top of script)."
@@ -296,7 +293,6 @@ mkdir -p "$LOG_DIR"
 
 SSL_FLAGS=$(openssl_flags)
 
-# Compile tracker and peer locally on Machine 1
 gcc -std=c11 -pthread -Wall -Wextra -o peer peer.c -lpthread \
     || die "peer.c failed to compile"
 # shellcheck disable=SC2086
@@ -304,8 +300,7 @@ gcc -std=c11 -Wall -Wextra -o tracker tracker.c \
     $SSL_FLAGS -lpthread -lssl -lcrypto \
     || die "tracker.c failed to compile"
 
-# Compile peer on remote peer machines
-for host in "$PEER1_MACHINE" "$PEER2_MACHINE" "$PEER3_MACHINE"; do
+for host in "$PEER1_MACHINE" "$PEER2_MACHINE" "$PEERS_MACHINE"; do
     is_local "$host" && continue
     log "Compiling on ${host}..."
     run_remote "$host" "
@@ -341,7 +336,7 @@ log "Small: $SMALL_FILE  size=${SMALL_SIZE}  md5=${SMALL_MD5}"
 log "Large: $LARGE_FILE  size=${LARGE_SIZE}  md5=${LARGE_MD5}"
 
 # =============================================================================
-# STEP 3 — Clean tracker directory (spec: no pre-existing .track files)
+# STEP 3 — Clean tracker directory
 # =============================================================================
 log "Cleaning tracker directory: ${TRACKER_SHARED_DIR}"
 rm -rf "$TRACKER_SHARED_DIR"
@@ -352,6 +347,7 @@ printf '%s\n%s\n' "$TRACKER_PORT" "$TRACKER_SHARED_DIR" > sconfig
 # STEP 4 — Start tracker (t=0)
 # =============================================================================
 log "=== t=0s: Starting tracker on port ${TRACKER_PORT} ==="
+DEMO_START=$(date +%s)
 ./tracker 2>&1 | tee "${LOG_DIR}/tracker.log" &
 TRACKER_PID=$!
 sleep 1
@@ -360,9 +356,8 @@ log "Tracker running  PID=${TRACKER_PID}"
 # =============================================================================
 # STEP 5 — Set up and start Peer1 and Peer2 (t=0)
 # =============================================================================
-log "=== t=0s: Starting Peer1 on ${PEER1_MACHINE} and Peer2 on ${PEER2_MACHINE} ==="
+log "=== t=0s: Starting Peer1 and Peer2 ==="
 
-# Copy shared files into each peer's shared folder
 if is_local "$PEER1_MACHINE"; then
     mkdir -p "${PROJECT_DIR}/peer1/${SHARED_FOLDER}"
     cp "${PROJECT_DIR}/${SMALL_FILE}" "${PROJECT_DIR}/peer1/${SHARED_FOLDER}/${SMALL_FILE}"
@@ -395,67 +390,95 @@ send_cmd 1 "$PEER1_MACHINE" \
     "createtracker ${SMALL_FILE} ${SMALL_SIZE} small_test_file ${SMALL_MD5} ${PEER1_MACHINE} ${PEER_PORTS[1]}"
 send_cmd 2 "$PEER2_MACHINE" \
     "createtracker ${LARGE_FILE} ${LARGE_SIZE} large_test_file ${LARGE_MD5} ${PEER2_MACHINE} ${PEER_PORTS[2]}"
-sleep 2
+
+sleep 5
+
+SMALL_END=$((SMALL_SIZE - 1))
+LARGE_END=$((LARGE_SIZE  - 1))
+send_cmd 1 "$PEER1_MACHINE" "updatetracker ${SMALL_FILE} 0 ${SMALL_END}"
+send_cmd 2 "$PEER2_MACHINE" "updatetracker ${LARGE_FILE} 0 ${LARGE_END}"
+sleep 3
 
 # =============================================================================
-# STEP 7 — t=30s: Start Peer3, list then download both files
+# STEP 7 — t=30s: Start Peers 3-8, list then download both files
 # =============================================================================
-log "Waiting ${T_WAVE1}s before starting Peer3-8."
-sleep "$T_WAVE1"
+sleep_until "$T_WAVE1"
+log "=== t=$(elapsed_t)s: Starting Peers 3-8 ==="
 
-log "=== t=${T_WAVE1}s: Starting Peer3-8 on ${PEER3_MACHINE} ==="
 for n in 3 4 5 6 7 8; do
     setup_peer_dir "$n" "$PEERS_MACHINE" "${PEER_PORTS[$n]}"
     start_peer "$n" "$PEERS_MACHINE"
-    sleep 1
+    sleep 3
     send_cmd "$n" "$PEERS_MACHINE" "list"
     sleep 1
     send_cmd "$n" "$PEERS_MACHINE" "get ${SMALL_FILE}.track"
-    sleep 1
+    sleep 2
     send_cmd "$n" "$PEERS_MACHINE" "get ${LARGE_FILE}.track"
 done
+
 # =============================================================================
-# STEP 8 — t=90s: Stop Peer1 and Peer2
+# STEP 8 — t=90s: Start Peers 9-13 AND stop Peers 1 & 2
 # =============================================================================
-WAVE2_WAIT=$((T_WAVE2 - T_WAVE1))
-log "=== t=$(elapsed_t)s: Starting Peers9–13 AND stopping Peers 1 & 2 ==="
+sleep_until "$T_WAVE2"
+log "=== t=$(elapsed_t)s: Starting Peers 9-13 AND stopping Peers 1 & 2 ==="
+
 for n in 9 10 11 12 13; do
     setup_peer_dir "$n" "$PEERS_MACHINE" "${PEER_PORTS[$n]}"
     start_peer "$n" "$PEERS_MACHINE"
-    sleep 1
+    sleep 3
     send_cmd "$n" "$PEERS_MACHINE" "list"
     sleep 1
     send_cmd "$n" "$PEERS_MACHINE" "get ${SMALL_FILE}.track"
-    sleep 1
+    sleep 2
     send_cmd "$n" "$PEERS_MACHINE" "get ${LARGE_FILE}.track"
 done
+
 stop_peer 1 "$PEER1_MACHINE"
 stop_peer 2 "$PEER2_MACHINE"
 
 # =============================================================================
-# STEP 9 — Wait for Peer3 to finish then stop it
+# STEP 9 — Wait for all downloaders to finish then stop them
 # =============================================================================
-log "Waiting ${DOWNLOAD_TIMEOUT}s for Peers 3–13 to complete..."
+log "Waiting ${DOWNLOAD_TIMEOUT}s for Peers 3-13 to complete..."
 sleep "$DOWNLOAD_TIMEOUT"
+
 for n in 3 4 5 6 7 8 9 10 11 12 13; do
     stop_peer "$n" "$PEERS_MACHINE"
 done
 sleep 3
 
 # =============================================================================
-# STEP 10 — Verify MD5 of downloaded files on Peer3
+# STEP 10 — Verify MD5 of downloaded files
 # =============================================================================
 log "=== Verifying downloads ==="
 
 all_pass=true
 for n in 3 4 5 6 7 8 9 10 11 12 13; do
     small_ok="FAIL"; large_ok="FAIL"
-    actual_small=$(remote_md5 "$PEERS_MACHINE" "${PROJECT_DIR}/peer${n}/${SHARED_FOLDER}/${SMALL_FILE}")
-    actual_large=$(remote_md5 "$PEERS_MACHINE" "${PROJECT_DIR}/peer${n}/${SHARED_FOLDER}/${LARGE_FILE}")
+
+    if is_local "$PEERS_MACHINE"; then
+        actual_small=$(md5_file "${PROJECT_DIR}/peer${n}/${SHARED_FOLDER}/${SMALL_FILE}" 2>/dev/null)
+        actual_large=$(md5_file "${PROJECT_DIR}/peer${n}/${SHARED_FOLDER}/${LARGE_FILE}"  2>/dev/null)
+    else
+        actual_small=$(remote_md5 "$PEERS_MACHINE" "${PROJECT_DIR}/peer${n}/${SHARED_FOLDER}/${SMALL_FILE}")
+        actual_large=$(remote_md5 "$PEERS_MACHINE" "${PROJECT_DIR}/peer${n}/${SHARED_FOLDER}/${LARGE_FILE}")
+    fi
+
     [ "$actual_small" = "$SMALL_MD5" ] && small_ok="OK"
     [ "$actual_large" = "$LARGE_MD5" ] && large_ok="OK"
     echo "Peer${n}: ${SMALL_FILE} [${small_ok}]  ${LARGE_FILE} [${large_ok}]"
+
     if [ "$small_ok" != "OK" ] || [ "$large_ok" != "OK" ]; then
         all_pass=false
     fi
 done
+
+if $all_pass; then
+    log "All downloads verified successfully across all 11 downloader peers"
+else
+    log "WARNING: some downloads failed MD5 check — check logs in ${LOG_DIR}/"
+    log "Expected small md5: ${SMALL_MD5}"
+    log "Expected large md5: ${LARGE_MD5}"
+fi
+
+log "=== Demo complete. Logs in ${LOG_DIR}/ ==="
