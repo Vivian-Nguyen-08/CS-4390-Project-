@@ -1,9 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
 # demo.sh — CS4390 P2P File Sharing Demo (Single Machine, 4 Terminals)
-#
-# NO SSH REQUIRED — everything runs locally using named pipes (FIFOs)
-#
 # HOW IT WORKS:
 #   This script opens 14 terminal windows automatically:
 #     Terminal 1 — Tracker
@@ -54,7 +51,6 @@ DOWNLOAD_TIMEOUT=300  # seconds: wait for Peer3 before verifying
 # Read from config files
 TRACKER_PORT=$(sed -n '1p' clientThreadConfig.cfg | tr -d '[:space:]')
 UPDATE_INTERVAL=$(sed -n '3p' clientThreadConfig.cfg | tr -d '[:space:]')
-MAX_CHUNKS=$(sed -n '4p'      clientThreadConfig.cfg | tr -d '[:space:]')
 MAX_PEERS=$(sed -n '5p'       clientThreadConfig.cfg | tr -d '[:space:]')
 MAX_SEGMENTS=$(sed -n '6p'    clientThreadConfig.cfg | tr -d '[:space:]')
 CACHE_DIR=$(sed -n '7p'       clientThreadConfig.cfg | tr -d '[:space:]')
@@ -63,7 +59,6 @@ SEGMENT_SIZE=$(sed -n '3p'    serverThreadConfig.cfg | tr -d '[:space:]')
 
 [ -z "$TRACKER_PORT" ]    && TRACKER_PORT=3490
 [ -z "$UPDATE_INTERVAL" ] && UPDATE_INTERVAL=900
-[ -z "$MAX_CHUNKS" ]      && MAX_CHUNKS=16384
 [ -z "$MAX_PEERS" ]       && MAX_PEERS=256
 [ -z "$MAX_SEGMENTS" ]    && MAX_SEGMENTS=256
 [ -z "$CACHE_DIR" ]       && CACHE_DIR="cache"
@@ -153,7 +148,7 @@ setup_peer_dir() {
     # Write clientThreadConfig.cfg with all 7 lines
     printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n' \
         "$TRACKER_PORT" "$TRACKER_IP" "$UPDATE_INTERVAL" \
-        "$MAX_CHUNKS" "$MAX_PEERS" "$MAX_SEGMENTS" "$CACHE_DIR" \
+        "$MAX_PEERS" "$MAX_SEGMENTS" "$CACHE_DIR" \
         > "${dir}/clientThreadConfig.cfg"
 
     # Write serverThreadConfig.cfg with port, shared folder, segment size
